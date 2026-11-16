@@ -20,7 +20,11 @@ VM_LINE = re.compile(
     r"(?P<file>.*?)\s+(?P<guest>\S+)\s+(?P<version>vmx-\S+)\s*(?P<annotation>.*)$"
 )
 POWER_COMMAND = re.compile(
-    r"^vim-cmd vmsvc/(?:power\.(?:getstate|on|off|shutdown)|get\.guest) [1-9][0-9]*$"
+    r"^vim-cmd vmsvc/(?:power\.(?:getstate|on|off|shutdown)|get\.(?:guest|summary)) [1-9][0-9]*$"
+)
+GUEST_BATCH_COMMAND = re.compile(
+    r"^(?:echo '---GUEST [1-9][0-9]*---'; vim-cmd vmsvc/get\.(?:guest|summary) [1-9][0-9]*)"
+    r"(?:; echo '---GUEST [1-9][0-9]*---'; vim-cmd vmsvc/get\.(?:guest|summary) [1-9][0-9]*)*$"
 )
 LIST_COMMAND = (
     "vim-cmd vmsvc/getallvms; "
@@ -30,6 +34,8 @@ LIST_COMMAND = (
 
 TOOLS_READY = {"guestToolsRunning"}
 TOOLS_OK = {"toolsOk", "toolsOld"}
+IP_CACHE_TTL_SEC = 60
+_ip_cache = {}  # vmid -> (ip, expires_at)
 
 
 class EsxiError(Exception):
@@ -57,8 +63,16 @@ def env(name):
     return value
 
 
+def command_allowed(command):
+    return (
+        command == LIST_COMMAND
+        or bool(POWER_COMMAND.fullmatch(command))
+        or bool(GUEST_BATCH_COMMAND.fullmatch(command))
+    )
+
+
 def ssh(command, timeout=120):
-    if command != LIST_COMMAND and not POWER_COMMAND.fullmatch(command):
+    if not command_allowed(command):
         raise EsxiError("That ESXi command is not allowed")
     password = os.environ.get("ESXI_PASSWORD", "")
     if not password:
@@ -157,18 +171,6 @@ def parse_vms(output):
     return vms
 
 
-def list_vms():
-    return parse_vms(ssh(LIST_COMMAND))
-
-
-def power_state(vmid):
-    output = ssh(f"vim-cmd vmsvc/power.getstate {int(vmid)}", timeout=30)
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
-    if not lines:
-        raise EsxiError(f"No power state returned for VM {vmid}")
-    return lines[-1]
-
-
 def _field(blob, name):
     match = re.search(rf'\b{re.escape(name)}\s*=\s*"([^"]*)"', blob)
     if match:
@@ -179,17 +181,103 @@ def _field(blob, name):
     return ""
 
 
+def parse_guest_ip(blob):
+    ip_address = _field(blob, "ipAddress")
+    if ip_address not in ("", "<unset>", "null"):
+        return ip_address
+    ips = re.findall(r'ipAddress\s*=\s*"(\d+\.\d+\.\d+\.\d+)"', blob)
+    return ips[0] if ips else ""
+
+
+def apply_cached_ips(vms):
+    now = time.time()
+    for vm in vms:
+        vmid = int(vm["vmid"])
+        cached = _ip_cache.get(vmid)
+        if cached and cached[1] > now and vm.get("power") == "Powered on":
+            vm["ip"] = cached[0]
+        else:
+            vm.setdefault("ip", "")
+            if vm.get("power") != "Powered on":
+                vm["ip"] = ""
+                _ip_cache.pop(vmid, None)
+    return vms
+
+
+def fetch_guest_ips(vmids, use_cache=True):
+    """Return {vmid: ip} for powered-on guests via get.summary (lighter than get.guest)."""
+    now = time.time()
+    wanted = []
+    result = {}
+    for raw in vmids:
+        vmid = int(raw)
+        if use_cache:
+            cached = _ip_cache.get(vmid)
+            if cached and cached[1] > now:
+                result[vmid] = cached[0]
+                continue
+        wanted.append(vmid)
+    if not wanted:
+        return result
+
+    command = "; ".join(
+        f"echo '---GUEST {vmid}---'; vim-cmd vmsvc/get.summary {vmid}" for vmid in wanted
+    )
+    try:
+        output = ssh(command, timeout=max(60, 12 * len(wanted)))
+    except EsxiError:
+        for vmid in wanted:
+            result.setdefault(vmid, "")
+        return result
+
+    current = None
+    chunks = {}
+    for line in output.splitlines():
+        marker = re.match(r"^---GUEST ([1-9][0-9]*)---\s*$", line.strip())
+        if marker:
+            current = int(marker.group(1))
+            chunks[current] = []
+            continue
+        if current is not None:
+            chunks[current].append(line)
+
+    expires = time.time() + IP_CACHE_TTL_SEC
+    for vmid in wanted:
+        ip = parse_guest_ip("\n".join(chunks.get(vmid, [])))
+        result[vmid] = ip
+        _ip_cache[vmid] = (ip, expires)
+    return result
+
+
+def list_vms(include_ips=False):
+    """Fast list by default. IPs come from cache and/or /api/ips."""
+    vms = apply_cached_ips(parse_vms(ssh(LIST_COMMAND)))
+    if include_ips:
+        powered_ids = [vm["vmid"] for vm in vms if vm.get("power") == "Powered on"]
+        ips = fetch_guest_ips(powered_ids, use_cache=True)
+        for vm in vms:
+            if vm.get("power") == "Powered on":
+                vm["ip"] = ips.get(int(vm["vmid"]), vm.get("ip") or "")
+            else:
+                vm["ip"] = ""
+    return vms
+
+
+def power_state(vmid):
+    output = ssh(f"vim-cmd vmsvc/power.getstate {int(vmid)}", timeout=30)
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise EsxiError(f"No power state returned for VM {vmid}")
+    return lines[-1]
+
+
 def guest_info(vmid):
     """Read guest/tools readiness from ESXi (vim-cmd vmsvc/get.guest)."""
     blob = ssh(f"vim-cmd vmsvc/get.guest {int(vmid)}", timeout=45)
     tools_running = _field(blob, "toolsRunningStatus")
     tools_status = _field(blob, "toolsStatus")
     guest_state = _field(blob, "guestState")
-    ip_address = _field(blob, "ipAddress")
-    if ip_address in ("", "<unset>", "null"):
-        # Prefer the first non-empty ipv4-looking address if top-level is empty.
-        ips = re.findall(r'ipAddress\s*=\s*"(\d+\.\d+\.\d+\.\d+)"', blob)
-        ip_address = ips[0] if ips else ""
+    ip_address = parse_guest_ip(blob)
 
     tools_running_ok = tools_running in TOOLS_READY
     tools_status_ok = tools_status in TOOLS_OK or tools_status == ""
@@ -308,6 +396,10 @@ def set_power(vmid, action, on_progress=None):
                     msg = f"{name} is powered on and the guest is ready"
                     if guest.get("ip_address"):
                         msg += f" ({guest['ip_address']})"
+                        _ip_cache[int(vmid)] = (
+                            guest["ip_address"],
+                            time.time() + IP_CACHE_TTL_SEC,
+                        )
                     msg += "."
                 else:
                     msg = f"{name} is powered on, but VMware Tools is not ready yet."
@@ -330,6 +422,10 @@ def set_power(vmid, action, on_progress=None):
             msg = f"Powered on {name}; guest is ready"
             if guest.get("ip_address"):
                 msg += f" ({guest['ip_address']})"
+                _ip_cache[int(vmid)] = (
+                    guest["ip_address"],
+                    time.time() + IP_CACHE_TTL_SEC,
+                )
             msg += "."
         else:
             msg = (
@@ -376,8 +472,8 @@ def set_power(vmid, action, on_progress=None):
         return f"Shut down {name}.", vms, None
 
 
-def payload_vms():
-    return {"ok": True, "host": env("ESXI_HOST"), "vms": list_vms()}
+def payload_vms(include_ips=False):
+    return {"ok": True, "host": env("ESXI_HOST"), "vms": list_vms(include_ips=include_ips)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -389,12 +485,43 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, "text/html; charset=utf-8", body, cache=False)
             return
         if path == "/api/vms":
+            qs = parse_qs(parsed.query)
+            include_ips = (qs.get("ips") or ["0"])[0] in ("1", "true", "yes")
             try:
-                payload = payload_vms()
+                payload = payload_vms(include_ips=include_ips)
             except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 502)
                 return
             self._send_json(payload)
+            return
+        if path == "/api/ips":
+            qs = parse_qs(parsed.query)
+            raw_ids = (qs.get("vmids") or [""])[0]
+            try:
+                if raw_ids.strip():
+                    vmids = [int(part) for part in raw_ids.split(",") if part.strip()]
+                else:
+                    vmids = [
+                        int(vm["vmid"])
+                        for vm in list_vms(include_ips=False)
+                        if vm.get("power") == "Powered on"
+                    ]
+                if any(vmid < 1 for vmid in vmids):
+                    raise ValueError
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "Provide valid vmids."}, 400)
+                return
+            try:
+                ips = fetch_guest_ips(vmids, use_cache=True)
+                self._send_json(
+                    {
+                        "ok": True,
+                        "host": env("ESXI_HOST"),
+                        "ips": {str(k): v for k, v in ips.items()},
+                    }
+                )
+            except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 502)
             return
         if path == "/api/guest":
             qs = parse_qs(parsed.query)

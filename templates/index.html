@@ -188,6 +188,7 @@
         <thead>
           <tr>
             <th>Virtual machine</th>
+            <th>IP</th>
             <th>Power</th>
             <th></th>
           </tr>
@@ -208,6 +209,8 @@
     let inFlight = 0;
     let vms = [];
     let hostName = "";
+    let ipsLoading = false;
+    let ipsRequest = 0;
     const notes = [];
     /** @type {Record<number, {percent:number, detail:string, stage:string}>} */
     const progressByVm = {};
@@ -237,14 +240,14 @@
       intro.textContent = `Host ${hostName}. Power on waits for VMware Tools before showing 100%. Shut down asks the guest to shut down, and powers the VM off if Tools is not running.`;
       const query = search.value.trim().toLowerCase();
       const visible = vms.filter((vm) => {
-        const haystack = `${vm.name} ${vm.guest} ${vm.vmid}`.toLowerCase();
+        const haystack = `${vm.name} ${vm.guest} ${vm.vmid} ${vm.ip || ""}`.toLowerCase();
         return haystack.includes(query);
       });
       rows.innerHTML = "";
       if (!visible.length) {
         const tr = document.createElement("tr");
         const td = document.createElement("td");
-        td.colSpan = 3;
+        td.colSpan = 4;
         td.className = "empty";
         td.textContent = query ? "No virtual machines match." : "No virtual machines.";
         tr.appendChild(td);
@@ -271,6 +274,16 @@
           nameCell.appendChild(progressElement(prog));
         }
 
+        const ipCell = document.createElement("td");
+        if (vm.ip) {
+          ipCell.textContent = vm.ip;
+        } else {
+          const emptyIp = document.createElement("span");
+          emptyIp.className = "sub";
+          emptyIp.textContent = vm.power === "Powered on" ? (ipsLoading ? "…" : "—") : "";
+          ipCell.appendChild(emptyIp);
+        }
+
         const powerCell = document.createElement("td");
         powerCell.innerHTML = pill(vm.power);
 
@@ -283,6 +296,7 @@
         actionCell.appendChild(actions);
 
         tr.appendChild(nameCell);
+        tr.appendChild(ipCell);
         tr.appendChild(powerCell);
         tr.appendChild(actionCell);
         rows.appendChild(tr);
@@ -336,14 +350,54 @@
       delete progressByVm[vmid];
     }
 
+    async function loadIps() {
+      const powered = vms.filter((vm) => vm.power === "Powered on").map((vm) => vm.vmid);
+      if (!powered.length) {
+        ipsLoading = false;
+        if (!table.hidden) render();
+        return;
+      }
+      const requestId = ++ipsRequest;
+      ipsLoading = true;
+      if (!table.hidden) render();
+      try {
+        const response = await fetch(
+          "/api/ips?vmids=" + encodeURIComponent(powered.join(",")) + "&t=" + Date.now(),
+          { cache: "no-store" }
+        );
+        const data = await response.json();
+        if (requestId !== ipsRequest) return;
+        if (!response.ok || !data.ok) throw new Error(data.error || "Could not load IPs");
+        const map = data.ips || {};
+        for (const vm of vms) {
+          if (vm.power === "Powered on") {
+            vm.ip = map[String(vm.vmid)] || map[vm.vmid] || "";
+          } else {
+            vm.ip = "";
+          }
+        }
+      } catch (error) {
+        if (requestId === ipsRequest) {
+          showBanner(error.message, "error");
+        }
+      } finally {
+        if (requestId === ipsRequest) {
+          ipsLoading = false;
+          if (!table.hidden) render();
+        }
+      }
+    }
+
     async function load() {
       refresh.disabled = true;
       refresh.textContent = "Refreshing…";
       try {
+        // Fast path: list only. IPs load in the background from VMware Tools.
         const response = await fetch("/api/vms?t=" + Date.now(), { cache: "no-store" });
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || "Could not load VMs");
         render(data);
+        loadIps();
       } catch (error) {
         if (!rows.children.length) {
           loading.hidden = false;
