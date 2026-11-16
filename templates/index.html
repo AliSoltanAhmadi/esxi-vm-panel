@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ESXi VM panel</title>
   <style>
-    :root {
+    :root, html[data-theme="dark"] {
       color-scheme: dark;
       --bg: #0b0d10;
       --panel: #14181e;
@@ -20,6 +20,38 @@
       --amber: #f59e0b;
       --danger: #f87171;
       --ok: #4ade80;
+      --bar-track: #0f141b;
+      --bar-border: #243041;
+      --thead: #12171e;
+      --banner-error-bg: #1f1214;
+      --banner-ok-bg: #102017;
+      --name: #93c5fd;
+      --logo-1: #2563eb;
+      --logo-2: #1d4ed8;
+    }
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: #eef2f6;
+      --panel: #ffffff;
+      --panel-2: #f5f7fa;
+      --line: #d7dee7;
+      --ink: #1c2430;
+      --muted: #5c6b7a;
+      --blue: #0b5cab;
+      --blue-dim: #dbeafe;
+      --green: #0f7a45;
+      --red: #b91c1c;
+      --amber: #b45309;
+      --danger: #9d1c2b;
+      --ok: #0f7a45;
+      --bar-track: #e8eef5;
+      --bar-border: #d0d9e4;
+      --thead: #f3f6f9;
+      --banner-error-bg: #fff5f6;
+      --banner-ok-bg: #e5f6ec;
+      --name: #0b5cab;
+      --logo-1: #2563eb;
+      --logo-2: #1d4ed8;
     }
     * { box-sizing: border-box; }
     body {
@@ -53,7 +85,8 @@
       width: 42px;
       height: 42px;
       border-radius: 10px;
-      background: linear-gradient(145deg, #2563eb, #1d4ed8);
+      background: linear-gradient(145deg, var(--logo-1), var(--logo-2));
+      color: #fff;
       display: grid;
       place-items: center;
       font-weight: 800;
@@ -100,9 +133,9 @@
     .bar {
       height: 8px;
       border-radius: 999px;
-      background: #0f141b;
+      background: var(--bar-track);
       overflow: hidden;
-      border: 1px solid #243041;
+      border: 1px solid var(--bar-border);
     }
     .bar > span {
       display: block;
@@ -173,8 +206,9 @@
     .danger {
       background: transparent;
       color: var(--danger);
-      border: 1px solid #7f1d1d;
+      border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
     }
+    .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .banner {
       margin: 0 0 14px;
       padding: 12px 14px;
@@ -183,8 +217,8 @@
       border: 1px solid var(--line);
       color: var(--ink);
     }
-    .banner.error { border-color: #7f1d1d; color: var(--danger); background: #1f1214; }
-    .banner.ok { border-color: #166534; color: var(--ok); background: #102017; }
+    .banner.error { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); color: var(--danger); background: var(--banner-error-bg); }
+    .banner.ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); color: var(--ok); background: var(--banner-ok-bg); }
     .card {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -210,13 +244,13 @@
       font-weight: 650;
       text-transform: uppercase;
       letter-spacing: 0.03em;
-      background: #12171e;
+      background: var(--thead);
       position: sticky;
       top: 0;
     }
     .name-button {
       background: transparent;
-      color: #93c5fd;
+      color: var(--name);
       padding: 0;
       font-weight: 650;
       text-align: left;
@@ -252,7 +286,7 @@
     .progress-track {
       height: 7px;
       border-radius: 999px;
-      background: #0f141b;
+      background: var(--bar-track);
       overflow: hidden;
     }
     .progress-fill {
@@ -319,7 +353,10 @@
           <h2>Virtual Machines</h2>
           <p id="intro">Loading virtual machines…</p>
         </div>
-        <button class="ghost" id="refresh" type="button">Refresh</button>
+        <div class="header-actions">
+          <button class="ghost" id="theme" type="button">Light</button>
+          <button class="ghost" id="refresh" type="button">Refresh</button>
+        </div>
       </div>
       <div class="toolbar">
         <input id="search" type="search" placeholder="Search name, OS, IP, id…" autocomplete="off">
@@ -356,6 +393,7 @@
     const table = document.querySelector("#table");
     const rows = document.querySelector("#rows");
     const refresh = document.querySelector("#refresh");
+    const themeButton = document.querySelector("#theme");
     const search = document.querySelector("#search");
     let inFlight = 0;
     let vms = [];
@@ -364,6 +402,12 @@
     let detailsRequest = 0;
     const notes = [];
     const progressByVm = {};
+
+    function applyTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      themeButton.textContent = theme === "dark" ? "Light" : "Dark";
+      localStorage.setItem("vm-panel-theme", theme);
+    }
 
     function showBanner(text, kind) {
       banner.hidden = !text;
@@ -722,7 +766,11 @@
     }
 
     search.addEventListener("input", () => { if (!table.hidden) render(); });
+    themeButton.addEventListener("click", () => {
+      applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+    });
     refresh.addEventListener("click", () => load());
+    applyTheme(localStorage.getItem("vm-panel-theme") || "dark");
     load();
   </script>
 </body>
