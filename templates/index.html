@@ -1,165 +1,268 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ESXi VM panel</title>
   <style>
     :root {
-      color-scheme: light;
-      --ink: #1c2430;
-      --muted: #5c6b7a;
-      --line: #d9e0e7;
-      --bg: #eef2f5;
-      --card: #ffffff;
-      --on: #0f7a45;
-      --on-bg: #e5f6ec;
-      --off: #5c6b7a;
-      --off-bg: #eef1f4;
-      --danger: #9d1c2b;
-      --accent: #0b5cab;
-      --bar: #0b5cab;
-      --bar-bg: #d9e0e7;
+      color-scheme: dark;
+      --bg: #0b0d10;
+      --panel: #14181e;
+      --panel-2: #1a2028;
+      --line: #2a3340;
+      --ink: #e8eef6;
+      --muted: #8b98a8;
+      --blue: #3b82f6;
+      --blue-dim: #1e3a5f;
+      --green: #22c55e;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --danger: #f87171;
+      --ok: #4ade80;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Segoe UI", sans-serif;
-      color: var(--ink);
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
       background: var(--bg);
+      color: var(--ink);
     }
-    main {
-      max-width: 980px;
-      margin: 0 auto;
-      padding: 28px 18px 48px;
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 100vh;
     }
-    header {
+    @media (max-width: 960px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 18px 16px 24px;
+    }
+    .brand {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+    .logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #2563eb, #1d4ed8);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      flex: 0 0 auto;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .brand .meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .metric {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 12px 10px;
+      margin-bottom: 10px;
+    }
+    .metric-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .metric-value {
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #0f141b;
+      overflow: hidden;
+      border: 1px solid #243041;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #2563eb, #60a5fa);
+      border-radius: inherit;
+      transition: width 0.4s ease;
+    }
+    .metric-sub {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .main {
+      padding: 22px 22px 40px;
+      overflow: auto;
+    }
+    .main-header {
       display: flex;
       justify-content: space-between;
       gap: 16px;
       align-items: flex-end;
       margin-bottom: 16px;
+      flex-wrap: wrap;
     }
-    h1 { margin: 0 0 6px; font-size: 28px; }
-    p { margin: 0; color: var(--muted); line-height: 1.45; }
-    button, .ghost {
-      border: 0;
-      border-radius: 8px;
-      padding: 10px 14px;
-      font: inherit;
-      cursor: pointer;
+    .main-header h2 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 700;
     }
-    button:disabled { cursor: wait; opacity: 0.65; }
-    .ghost { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
-    .primary { background: var(--accent); color: white; }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      overflow: hidden;
-    }
-    html[data-theme="dark"] {
-      color-scheme: dark;
-      --ink: #e7edf4;
-      --muted: #a8b3c0;
-      --line: #2c3846;
-      --bg: #12181f;
-      --card: #1b242e;
-      --on: #8ee0b0;
-      --on-bg: #163528;
-      --off: #a8b3c0;
-      --off-bg: #2a3340;
-      --danger: #ffb4bc;
-      --accent: #9ec0ff;
-      --bar: #9ec0ff;
-      --bar-bg: #2c3846;
+    .main-header p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
     }
     .toolbar {
       display: flex;
       gap: 10px;
       align-items: center;
       margin-bottom: 14px;
+      flex-wrap: wrap;
     }
     .toolbar input {
       flex: 1;
-      min-width: 0;
+      min-width: 200px;
       border: 1px solid var(--line);
-      background: var(--card);
+      background: var(--panel);
       color: var(--ink);
-      border-radius: 8px;
-      padding: 10px 12px;
+      border-radius: 10px;
+      padding: 11px 12px;
       font: inherit;
     }
-    .toolbar-actions { display: flex; gap: 8px; }
+    button, .ghost {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:disabled { cursor: wait; opacity: 0.6; }
+    .ghost {
+      background: var(--panel);
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    .primary { background: var(--blue); color: white; }
+    .danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid #7f1d1d;
+    }
     .banner {
       margin: 0 0 14px;
       padding: 12px 14px;
       border-radius: 10px;
-      background: var(--card);
-      color: var(--ink);
+      background: var(--panel);
       border: 1px solid var(--line);
+      color: var(--ink);
     }
-    .banner.error { border-color: #f0c2c7; background: #fff5f6; color: var(--danger); }
-    .banner.ok { border-color: #b7e4c7; background: var(--on-bg); color: var(--on); }
-    html[data-theme="dark"] .banner.error { background: #3a2024; border-color: #6e3940; }
-    html[data-theme="dark"] .banner.ok { background: #163528; border-color: #2f6b4a; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 13px 14px; border-top: 1px solid var(--line); vertical-align: middle; }
-    th { border-top: 0; color: var(--muted); font-size: 13px; font-weight: 600; }
+    .banner.error { border-color: #7f1d1d; color: var(--danger); background: #1f1214; }
+    .banner.ok { border-color: #166534; color: var(--ok); background: #102017; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 980px;
+    }
+    th, td {
+      text-align: left;
+      padding: 14px 12px;
+      border-top: 1px solid var(--line);
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    th {
+      border-top: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      background: #12171e;
+      position: sticky;
+      top: 0;
+    }
     .name-button {
       background: transparent;
-      color: var(--accent);
+      color: #93c5fd;
       padding: 0;
       font-weight: 650;
       text-align: left;
     }
     .name-button:hover { text-decoration: underline; }
+    .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .status {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      border: 2px solid currentColor;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .status.on { color: var(--green); }
+    .status.off { color: var(--red); }
+    .status.suspended { color: var(--amber); }
+    .tools-ok { color: var(--ok); }
+    .tools-bad { color: var(--amber); }
     .actions { display: flex; gap: 8px; justify-content: flex-end; }
-    .danger {
-      background: var(--card);
-      color: var(--danger);
-      border: 1px solid #f0c2c7;
-    }
-    .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
-    .pill {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 999px;
-      font-size: 13px;
-      background: var(--off-bg);
-      color: var(--off);
-    }
-    .pill.on { background: var(--on-bg); color: var(--on); }
     .empty, .loading { padding: 28px 16px; color: var(--muted); }
-    .progress-wrap {
-      margin-top: 8px;
-      min-width: 180px;
-      max-width: 280px;
-    }
+    .progress-wrap { margin-top: 8px; min-width: 160px; max-width: 240px; }
     .progress-meta {
       display: flex;
       justify-content: space-between;
       gap: 8px;
-      font-size: 12px;
+      font-size: 11px;
       color: var(--muted);
       margin-bottom: 4px;
     }
     .progress-track {
-      height: 8px;
+      height: 7px;
       border-radius: 999px;
-      background: var(--bar-bg);
+      background: #0f141b;
       overflow: hidden;
     }
     .progress-fill {
       height: 100%;
       width: 0%;
-      border-radius: 999px;
-      background: var(--bar);
+      border-radius: inherit;
+      background: var(--blue);
       transition: width 0.35s ease;
     }
-    .progress-fill.pulse {
-      animation: pulse 1.2s ease-in-out infinite;
-    }
+    .progress-fill.pulse { animation: pulse 1.2s ease-in-out infinite; }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.55; }
@@ -167,37 +270,86 @@
   </style>
 </head>
 <body>
-  <main>
-    <header>
-      <div>
-        <h1>ESXi VM panel</h1>
-        <p id="intro">Loading virtual machines…</p>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">vm</div>
+        <div>
+          <h1 id="hostTitle">ESXi</h1>
+          <div class="meta" id="hostMeta">Loading host…</div>
+        </div>
       </div>
-      <button class="ghost" id="refresh" type="button">Refresh</button>
-    </header>
-    <div class="toolbar">
-      <input id="search" type="search" placeholder="Search virtual machines" autocomplete="off">
-      <div class="toolbar-actions">
-        <button class="ghost" id="theme" type="button">Dark</button>
+      <div class="metric">
+        <div class="metric-top">
+          <span class="metric-label">CPU</span>
+          <span class="metric-value" id="cpuValue">—</span>
+        </div>
+        <div class="bar"><span id="cpuBar"></span></div>
+        <div class="metric-sub" id="cpuSub"></div>
       </div>
-    </div>
-    <div id="banner" class="banner" hidden></div>
-    <section class="card">
-      <div id="loading" class="loading">Reading the VM list from ESXi.</div>
-      <table id="table" hidden>
-        <thead>
-          <tr>
-            <th>Virtual machine</th>
-            <th>IP</th>
-            <th>Power</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
-    </section>
-  </main>
+      <div class="metric">
+        <div class="metric-top">
+          <span class="metric-label">RAM</span>
+          <span class="metric-value" id="ramValue">—</span>
+        </div>
+        <div class="bar"><span id="ramBar"></span></div>
+        <div class="metric-sub" id="ramSub"></div>
+      </div>
+      <div class="metric">
+        <div class="metric-top">
+          <span class="metric-label">Datastore</span>
+          <span class="metric-value" id="dsValue">—</span>
+        </div>
+        <div class="bar"><span id="dsBar"></span></div>
+        <div class="metric-sub" id="dsSub"></div>
+      </div>
+      <div class="metric" id="ds2Metric" hidden>
+        <div class="metric-top">
+          <span class="metric-label" id="ds2Label">Datastore 2</span>
+          <span class="metric-value" id="ds2Value">—</span>
+        </div>
+        <div class="bar"><span id="ds2Bar"></span></div>
+        <div class="metric-sub" id="ds2Sub"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="main-header">
+        <div>
+          <h2>Virtual Machines</h2>
+          <p id="intro">Loading virtual machines…</p>
+        </div>
+        <button class="ghost" id="refresh" type="button">Refresh</button>
+      </div>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Search name, OS, IP, id…" autocomplete="off">
+      </div>
+      <div id="banner" class="banner" hidden></div>
+      <section class="card">
+        <div id="loading" class="loading">Reading the VM list from ESXi.</div>
+        <table id="table" hidden>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Name</th>
+              <th>Uptime</th>
+              <th>CPU</th>
+              <th>RAM</th>
+              <th>Disk</th>
+              <th>IP</th>
+              <th>Tools</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+
   <script>
+    const hostTitle = document.querySelector("#hostTitle");
+    const hostMeta = document.querySelector("#hostMeta");
     const intro = document.querySelector("#intro");
     const banner = document.querySelector("#banner");
     const loading = document.querySelector("#loading");
@@ -205,21 +357,13 @@
     const rows = document.querySelector("#rows");
     const refresh = document.querySelector("#refresh");
     const search = document.querySelector("#search");
-    const themeButton = document.querySelector("#theme");
     let inFlight = 0;
     let vms = [];
     let hostName = "";
-    let ipsLoading = false;
-    let ipsRequest = 0;
+    let detailsLoading = false;
+    let detailsRequest = 0;
     const notes = [];
-    /** @type {Record<number, {percent:number, detail:string, stage:string}>} */
     const progressByVm = {};
-
-    function applyTheme(theme) {
-      document.documentElement.dataset.theme = theme;
-      themeButton.textContent = theme === "dark" ? "Light" : "Dark";
-      localStorage.setItem("vm-panel-theme", theme);
-    }
 
     function showBanner(text, kind) {
       banner.hidden = !text;
@@ -227,9 +371,65 @@
       banner.textContent = text || "";
     }
 
-    function pill(power) {
-      const on = power === "Powered on";
-      return `<span class="pill${on ? " on" : ""}">${power}</span>`;
+    function statusIcon(power) {
+      const el = document.createElement("span");
+      if (power === "Powered on") {
+        el.className = "status on";
+        el.title = "Powered on";
+        el.textContent = "✓";
+      } else if ((power || "").toLowerCase().includes("suspend")) {
+        el.className = "status suspended";
+        el.title = "Suspended";
+        el.textContent = "❚❚";
+      } else {
+        el.className = "status off";
+        el.title = "Powered off";
+        el.textContent = "";
+      }
+      return el;
+    }
+
+    function renderHost(host) {
+      if (!host) return;
+      hostTitle.textContent = "ESXi";
+      hostMeta.innerHTML = [
+        host.uptime ? `Uptime ${host.uptime}` : "",
+        host.ip || "",
+        host.version ? `Version ${host.version}` : "",
+      ].filter(Boolean).join("<br>");
+
+      const cpu = host.cpu || {};
+      document.querySelector("#cpuValue").textContent =
+        cpu.used_ghz != null ? `${cpu.used_ghz} GHz` : "—";
+      document.querySelector("#cpuBar").style.width = `${Math.min(100, cpu.percent || 0)}%`;
+      document.querySelector("#cpuSub").textContent =
+        cpu.total_ghz != null ? `${cpu.percent || 0}% of ${cpu.total_ghz} GHz · ${cpu.cores || "?"} cores` : "";
+
+      const mem = host.memory || {};
+      document.querySelector("#ramValue").textContent =
+        mem.used_gb != null ? `${mem.used_gb} GB` : "—";
+      document.querySelector("#ramBar").style.width = `${Math.min(100, mem.percent || 0)}%`;
+      document.querySelector("#ramSub").textContent =
+        mem.total_gb != null ? `${mem.percent || 0}% of ${mem.total_gb} GB` : "";
+
+      const stores = host.datastores || (host.datastore ? [host.datastore] : []);
+      const ds = stores[0];
+      if (ds) {
+        document.querySelector("#dsValue").textContent = `${ds.used_gb} GB`;
+        document.querySelector("#dsBar").style.width = `${Math.min(100, ds.percent || 0)}%`;
+        document.querySelector("#dsSub").textContent = `${ds.name} · ${ds.percent}% of ${ds.size_gb} GB`;
+      }
+      const ds2 = stores[1];
+      const ds2Metric = document.querySelector("#ds2Metric");
+      if (ds2) {
+        ds2Metric.hidden = false;
+        document.querySelector("#ds2Label").textContent = ds2.name || "Datastore 2";
+        document.querySelector("#ds2Value").textContent = `${ds2.used_gb} GB`;
+        document.querySelector("#ds2Bar").style.width = `${Math.min(100, ds2.percent || 0)}%`;
+        document.querySelector("#ds2Sub").textContent = `${ds2.percent}% of ${ds2.size_gb} GB`;
+      } else {
+        ds2Metric.hidden = true;
+      }
     }
 
     function render(data) {
@@ -240,14 +440,16 @@
       intro.textContent = `Host ${hostName}. Power on or shut down each VM from the list.`;
       const query = search.value.trim().toLowerCase();
       const visible = vms.filter((vm) => {
-        const haystack = `${vm.name} ${vm.guest} ${vm.vmid} ${vm.ip || ""}`.toLowerCase();
+        const haystack = [
+          vm.name, vm.guest, vm.guest_full_name, vm.vmid, vm.ip, vm.tools
+        ].join(" ").toLowerCase();
         return haystack.includes(query);
       });
       rows.innerHTML = "";
       if (!visible.length) {
         const tr = document.createElement("tr");
         const td = document.createElement("td");
-        td.colSpan = 4;
+        td.colSpan = 9;
         td.className = "empty";
         td.textContent = query ? "No virtual machines match." : "No virtual machines.";
         tr.appendChild(td);
@@ -258,6 +460,10 @@
       }
       for (const vm of visible) {
         const tr = document.createElement("tr");
+
+        const statusCell = document.createElement("td");
+        statusCell.appendChild(statusIcon(vm.power));
+
         const nameCell = document.createElement("td");
         const nameButton = document.createElement("button");
         nameButton.className = "name-button";
@@ -266,26 +472,37 @@
         nameButton.addEventListener("click", () => changePower(vm, "on"));
         const sub = document.createElement("div");
         sub.className = "sub";
-        sub.textContent = `${vm.guest} · id ${vm.vmid}`;
+        sub.textContent = vm.guest_full_name || vm.guest || `id ${vm.vmid}`;
         nameCell.appendChild(nameButton);
         nameCell.appendChild(sub);
         const prog = progressByVm[vm.vmid];
-        if (prog) {
-          nameCell.appendChild(progressElement(prog));
-        }
+        if (prog) nameCell.appendChild(progressElement(prog));
+
+        const uptimeCell = document.createElement("td");
+        uptimeCell.textContent = vm.power === "Powered on" ? (vm.uptime || (detailsLoading ? "…" : "—")) : "";
+
+        const cpuCell = document.createElement("td");
+        cpuCell.textContent = vm.cpu_cores != null ? `${vm.cpu_cores} cores` : (detailsLoading ? "…" : "—");
+
+        const ramCell = document.createElement("td");
+        ramCell.textContent = vm.memory_gb != null ? `${vm.memory_gb} GB` : (detailsLoading ? "…" : "—");
+
+        const diskCell = document.createElement("td");
+        diskCell.textContent = vm.disk_gb != null ? `${vm.disk_gb} GB` : (detailsLoading ? "…" : "—");
 
         const ipCell = document.createElement("td");
-        if (vm.ip) {
-          ipCell.textContent = vm.ip;
-        } else {
-          const emptyIp = document.createElement("span");
-          emptyIp.className = "sub";
-          emptyIp.textContent = vm.power === "Powered on" ? (ipsLoading ? "…" : "—") : "";
-          ipCell.appendChild(emptyIp);
+        if (vm.ip) ipCell.textContent = vm.ip;
+        else {
+          const span = document.createElement("span");
+          span.className = "sub";
+          span.textContent = vm.power === "Powered on" ? (detailsLoading ? "…" : "n/a") : "n/a";
+          ipCell.appendChild(span);
         }
 
-        const powerCell = document.createElement("td");
-        powerCell.innerHTML = pill(vm.power);
+        const toolsCell = document.createElement("td");
+        const tools = vm.tools || (detailsLoading ? "…" : "—");
+        toolsCell.textContent = tools;
+        toolsCell.className = tools === "Ok" ? "tools-ok" : "tools-bad";
 
         const actionCell = document.createElement("td");
         const actions = document.createElement("div");
@@ -295,10 +512,7 @@
         actions.appendChild(actionButton("Shut down", "danger", vm, "off", vm.power === "Powered off" || busy));
         actionCell.appendChild(actions);
 
-        tr.appendChild(nameCell);
-        tr.appendChild(ipCell);
-        tr.appendChild(powerCell);
-        tr.appendChild(actionCell);
+        tr.append(statusCell, nameCell, uptimeCell, cpuCell, ramCell, diskCell, ipCell, toolsCell, actionCell);
         rows.appendChild(tr);
       }
       loading.hidden = true;
@@ -314,16 +528,14 @@
       label.textContent = prog.detail || prog.stage || "Working…";
       const pct = document.createElement("span");
       pct.textContent = `${Math.max(0, Math.min(100, Number(prog.percent) || 0))}%`;
-      meta.appendChild(label);
-      meta.appendChild(pct);
+      meta.append(label, pct);
       const track = document.createElement("div");
       track.className = "progress-track";
       const fill = document.createElement("div");
       fill.className = "progress-fill" + ((prog.percent || 0) < 100 ? " pulse" : "");
       fill.style.width = `${Math.max(0, Math.min(100, Number(prog.percent) || 0))}%`;
       track.appendChild(fill);
-      wrap.appendChild(meta);
-      wrap.appendChild(track);
+      wrap.append(meta, track);
       return wrap;
     }
 
@@ -350,39 +562,24 @@
       delete progressByVm[vmid];
     }
 
-    async function loadIps() {
-      const powered = vms.filter((vm) => vm.power === "Powered on").map((vm) => vm.vmid);
-      if (!powered.length) {
-        ipsLoading = false;
-        if (!table.hidden) render();
-        return;
-      }
-      const requestId = ++ipsRequest;
-      ipsLoading = true;
+    async function loadDetails() {
+      const requestId = ++detailsRequest;
+      detailsLoading = true;
       if (!table.hidden) render();
       try {
-        const response = await fetch(
-          "/api/ips?vmids=" + encodeURIComponent(powered.join(",")) + "&t=" + Date.now(),
-          { cache: "no-store" }
-        );
+        const ids = vms.map((vm) => vm.vmid).join(",");
+        const response = await fetch("/api/details?vmids=" + encodeURIComponent(ids) + "&t=" + Date.now(), { cache: "no-store" });
         const data = await response.json();
-        if (requestId !== ipsRequest) return;
-        if (!response.ok || !data.ok) throw new Error(data.error || "Could not load IPs");
-        const map = data.ips || {};
-        for (const vm of vms) {
-          if (vm.power === "Powered on") {
-            vm.ip = map[String(vm.vmid)] || map[vm.vmid] || "";
-          } else {
-            vm.ip = "";
-          }
-        }
+        if (requestId !== detailsRequest) return;
+        if (!response.ok || !data.ok) throw new Error(data.error || "Could not load VM details");
+        const map = {};
+        for (const vm of data.vms || []) map[vm.vmid] = vm;
+        vms = vms.map((vm) => Object.assign({}, vm, map[vm.vmid] || {}));
       } catch (error) {
-        if (requestId === ipsRequest) {
-          showBanner(error.message, "error");
-        }
+        if (requestId === detailsRequest) showBanner(error.message, "error");
       } finally {
-        if (requestId === ipsRequest) {
-          ipsLoading = false;
+        if (requestId === detailsRequest) {
+          detailsLoading = false;
           if (!table.hidden) render();
         }
       }
@@ -392,12 +589,17 @@
       refresh.disabled = true;
       refresh.textContent = "Refreshing…";
       try {
-        // Fast path: list only. IPs load in the background from VMware Tools.
-        const response = await fetch("/api/vms?t=" + Date.now(), { cache: "no-store" });
-        const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || "Could not load VMs");
+        const [hostRes, vmsRes] = await Promise.all([
+          fetch("/api/host?t=" + Date.now(), { cache: "no-store" }),
+          fetch("/api/vms?t=" + Date.now(), { cache: "no-store" }),
+        ]);
+        const hostData = await hostRes.json();
+        const data = await vmsRes.json();
+        if (!vmsRes.ok || !data.ok) throw new Error(data.error || "Could not load VMs");
+        if (hostRes.ok && hostData.ok) renderHost(hostData.host);
+        else if (!hostRes.ok || !hostData.ok) showBanner(hostData.error || "Could not load host stats", "error");
         render(data);
-        loadIps();
+        loadDetails();
       } catch (error) {
         if (!rows.children.length) {
           loading.hidden = false;
@@ -447,17 +649,12 @@
         stage: "starting",
         detail: turningOn ? `Powering on ${vm.name}…` : `Shutting down ${vm.name}…`,
       });
-      showBanner(
-        turningOn
-          ? `Powering on ${vm.name} and waiting for VMware Tools…`
-          : `Shutting down ${vm.name}…`,
-        ""
-      );
+      showBanner(turningOn ? `Powering on ${vm.name}…` : `Shutting down ${vm.name}…`, "");
       try {
         const response = await fetch("/api/power", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ vmid: vm.vmid, action: action, stream: true }),
+          body: JSON.stringify({ vmid: vm.vmid, action, stream: true }),
         });
         if (!response.ok && !response.body) {
           const data = await response.json().catch(() => ({}));
@@ -470,16 +667,12 @@
               showBanner(event.detail || event.message, event.type === "done" ? "ok" : "");
             }
           }
-          if (event.type === "done" && event.vms) {
-            render(event);
-          }
+          if (event.type === "done" && event.vms) render(event);
           if (event.type === "error" || event.ok === false) {
             throw new Error(event.error || "Power change failed");
           }
         });
-        if (!last || last.ok === false) {
-          throw new Error((last && last.error) || "Power change failed");
-        }
+        if (!last || last.ok === false) throw new Error((last && last.error) || "Power change failed");
         notes.push({ ok: true, text: last.message || last.detail || "Done." });
       } catch (error) {
         notes.push({ ok: false, text: error.message });
@@ -498,16 +691,8 @@
       }
     }
 
-    search.addEventListener("input", () => {
-      if (!table.hidden) render();
-    });
-    themeButton.addEventListener("click", () => {
-      applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
-    });
-    refresh.addEventListener("click", () => {
-      load();
-    });
-    applyTheme(localStorage.getItem("vm-panel-theme") || "light");
+    search.addEventListener("input", () => { if (!table.hidden) render(); });
+    refresh.addEventListener("click", () => load());
     load();
   </script>
 </body>

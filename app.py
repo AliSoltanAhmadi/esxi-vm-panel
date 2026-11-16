@@ -31,11 +31,15 @@ LIST_COMMAND = (
     "echo '---RUNNING---'; "
     "esxcli vm process list"
 )
+HOST_SUMMARY_COMMAND = "vim-cmd hostsvc/hostsummary"
+STORAGE_LIST_COMMAND = "esxcli storage filesystem list"
 
 TOOLS_READY = {"guestToolsRunning"}
 TOOLS_OK = {"toolsOk", "toolsOld"}
 IP_CACHE_TTL_SEC = 60
 _ip_cache = {}  # vmid -> (ip, expires_at)
+_details_cache = {}  # vmid -> (details_dict, expires_at)
+_host_cache = {"data": None, "expires": 0}
 
 
 class EsxiError(Exception):
@@ -66,6 +70,8 @@ def env(name):
 def command_allowed(command):
     return (
         command == LIST_COMMAND
+        or command == HOST_SUMMARY_COMMAND
+        or command == STORAGE_LIST_COMMAND
         or bool(POWER_COMMAND.fullmatch(command))
         or bool(GUEST_BATCH_COMMAND.fullmatch(command))
     )
@@ -181,12 +187,213 @@ def _field(blob, name):
     return ""
 
 
+def _num(blob, name):
+    match = re.search(rf"\b{re.escape(name)}\s*=\s*(-?\d+)", blob)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
 def parse_guest_ip(blob):
     ip_address = _field(blob, "ipAddress")
     if ip_address not in ("", "<unset>", "null"):
         return ip_address
     ips = re.findall(r'ipAddress\s*=\s*"(\d+\.\d+\.\d+\.\d+)"', blob)
     return ips[0] if ips else ""
+
+
+def format_uptime(seconds):
+    if seconds is None or seconds < 0:
+        return ""
+    days = seconds / 86400.0
+    if days >= 1:
+        return f"{days:.2f} days"
+    hours = seconds / 3600.0
+    if hours >= 1:
+        return f"{hours:.1f} hours"
+    minutes = max(1, int(seconds / 60))
+    return f"{minutes} min"
+
+
+def format_gb_from_mb(mb):
+    if mb is None:
+        return ""
+    return f"{mb / 1024.0:.1f} GB"
+
+
+def format_gb_from_bytes(num):
+    if num is None:
+        return ""
+    return f"{num / (1024.0 ** 3):.2f} GB"
+
+
+def tools_label(tools_status, tools_running, powered_on):
+    if not powered_on:
+        return "NotRunning"
+    status = (tools_status or "").lower()
+    running = (tools_running or "").lower()
+    if "notinstalled" in status or status == "toolsnotinstalled":
+        return "NotInstalled"
+    if running == "guesttoolsrunning" or status in ("toolsok", "toolsold"):
+        return "Ok"
+    if "notrunning" in running or status == "toolsnotrunning":
+        return "NotRunning"
+    return tools_status or tools_running or "Unknown"
+
+
+def parse_summary_details(blob, powered_on=False):
+    memory_mb = _num(blob, "memorySizeMB")
+    num_cpu = _num(blob, "numCpu")
+    committed = _num(blob, "committed")
+    uptime = _num(blob, "uptimeSeconds")
+    guest_full = _field(blob, "guestFullName")
+    tools_status = _field(blob, "toolsStatus")
+    tools_running = _field(blob, "toolsRunningStatus")
+    ip_address = parse_guest_ip(blob)
+    return {
+        "guest_full_name": guest_full,
+        "cpu_cores": num_cpu,
+        "memory_mb": memory_mb,
+        "memory_gb": round((memory_mb or 0) / 1024.0, 1) if memory_mb is not None else None,
+        "disk_bytes": committed,
+        "disk_gb": round((committed or 0) / (1024.0 ** 3), 2) if committed is not None else None,
+        "uptime_seconds": uptime if powered_on else 0,
+        "uptime": format_uptime(uptime) if powered_on and uptime else "",
+        "ip": ip_address if powered_on else "",
+        "tools": tools_label(tools_status, tools_running, powered_on),
+        "tools_status": tools_status or "unknown",
+        "tools_running_status": tools_running or "unknown",
+        "snapshots": None,
+    }
+
+
+def fetch_vm_details(vms):
+    """Batch get.summary for VM hardware / tools / IP details."""
+    now = time.time()
+    result = {}
+    wanted = []
+    by_id = {int(vm["vmid"]): vm for vm in vms}
+    for vm in vms:
+        vmid = int(vm["vmid"])
+        cached = _details_cache.get(vmid)
+        if cached and cached[1] > now:
+            result[vmid] = cached[0]
+            continue
+        wanted.append(vmid)
+    if wanted:
+        command = "; ".join(
+            f"echo '---GUEST {vmid}---'; vim-cmd vmsvc/get.summary {vmid}" for vmid in wanted
+        )
+        try:
+            output = ssh(command, timeout=max(90, 15 * len(wanted)))
+        except EsxiError:
+            output = ""
+        current = None
+        chunks = {}
+        for line in (output or "").splitlines():
+            marker = re.match(r"^---GUEST ([1-9][0-9]*)---\s*$", line.strip())
+            if marker:
+                current = int(marker.group(1))
+                chunks[current] = []
+                continue
+            if current is not None:
+                chunks[current].append(line)
+        expires = time.time() + IP_CACHE_TTL_SEC
+        for vmid in wanted:
+            powered_on = by_id.get(vmid, {}).get("power") == "Powered on"
+            details = parse_summary_details("\n".join(chunks.get(vmid, [])), powered_on=powered_on)
+            result[vmid] = details
+            _details_cache[vmid] = (details, expires)
+            if details.get("ip"):
+                _ip_cache[vmid] = (details["ip"], expires)
+    return result
+
+
+def host_info(use_cache=True):
+    now = time.time()
+    if use_cache and _host_cache["data"] and _host_cache["expires"] > now:
+        return _host_cache["data"]
+
+    summary = ssh(HOST_SUMMARY_COMMAND, timeout=60)
+    storage = ssh(STORAGE_LIST_COMMAND, timeout=60)
+
+    cpu_mhz = _num(summary, "cpuMhz") or 0
+    num_cores = _num(summary, "numCpuCores") or 0
+    overall_cpu = _num(summary, "overallCpuUsage") or 0
+    memory_bytes = _num(summary, "memorySize") or 0
+    overall_mem_mb = _num(summary, "overallMemoryUsage") or 0
+    uptime = _num(summary, "uptime") or 0
+    version = _field(summary, "version") or ""
+    full_name = _field(summary, "fullName") or "VMware ESXi"
+    host_name = _field(summary, "name") or env("ESXI_HOST")
+
+    cpu_total_mhz = cpu_mhz * num_cores
+    cpu_used_ghz = overall_cpu / 1000.0
+    cpu_total_ghz = cpu_total_mhz / 1000.0
+    mem_used_gb = overall_mem_mb / 1024.0
+    mem_total_gb = memory_bytes / (1024.0 ** 3)
+
+    datastores = []
+    for line in storage.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        # Mount Point, Volume Name, UUID, Mounted, Type, Size, Free
+        # Volume name may contain spaces - parse from the right.
+        try:
+            size_b = int(parts[-2])
+            free_b = int(parts[-1])
+        except ValueError:
+            continue
+        fs_type = parts[-3]
+        mounted = parts[-4]
+        uuid = parts[-5]
+        mount = parts[0]
+        volume = " ".join(parts[1:-5]).strip() or uuid
+        used_b = max(0, size_b - free_b)
+        datastores.append(
+            {
+                "name": volume,
+                "type": fs_type,
+                "mounted": mounted.lower() == "true",
+                "size_bytes": size_b,
+                "free_bytes": free_b,
+                "used_bytes": used_b,
+                "size_gb": round(size_b / (1024.0 ** 3), 2),
+                "used_gb": round(used_b / (1024.0 ** 3), 2),
+                "free_gb": round(free_b / (1024.0 ** 3), 2),
+                "percent": round((used_b / size_b) * 100, 1) if size_b else 0,
+            }
+        )
+
+    primary = datastores[0] if datastores else None
+    payload = {
+        "name": host_name,
+        "product": full_name,
+        "version": version,
+        "ip": env("ESXI_HOST"),
+        "uptime_seconds": uptime,
+        "uptime": format_uptime(uptime),
+        "cpu": {
+            "used_ghz": round(cpu_used_ghz, 1),
+            "total_ghz": round(cpu_total_ghz, 1),
+            "percent": round((overall_cpu / cpu_total_mhz) * 100, 1) if cpu_total_mhz else 0,
+            "cores": num_cores,
+        },
+        "memory": {
+            "used_gb": round(mem_used_gb, 1),
+            "total_gb": round(mem_total_gb, 1),
+            "percent": round((overall_mem_mb * 1024 * 1024 / memory_bytes) * 100, 1) if memory_bytes else 0,
+        },
+        "datastores": datastores,
+        "datastore": primary,
+    }
+    _host_cache["data"] = payload
+    _host_cache["expires"] = time.time() + 30
+    return payload
 
 
 def apply_cached_ips(vms):
@@ -484,6 +691,12 @@ class Handler(BaseHTTPRequestHandler):
             body = (BASE_DIR / "templates" / "index.html").read_bytes()
             self._send(200, "text/html; charset=utf-8", body, cache=False)
             return
+        if path == "/api/host":
+            try:
+                self._send_json({"ok": True, "host": host_info(use_cache=True)})
+            except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 502)
+            return
         if path == "/api/vms":
             qs = parse_qs(parsed.query)
             include_ips = (qs.get("ips") or ["0"])[0] in ("1", "true", "yes")
@@ -493,6 +706,29 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, 502)
                 return
             self._send_json(payload)
+            return
+        if path == "/api/details":
+            qs = parse_qs(parsed.query)
+            raw_ids = (qs.get("vmids") or [""])[0]
+            try:
+                vms = list_vms(include_ips=False)
+                if raw_ids.strip():
+                    wanted = {int(part) for part in raw_ids.split(",") if part.strip()}
+                    selected = [vm for vm in vms if int(vm["vmid"]) in wanted]
+                else:
+                    selected = vms
+                details = fetch_vm_details(selected)
+                enriched = []
+                for vm in selected:
+                    item = dict(vm)
+                    extra = details.get(int(vm["vmid"]), {})
+                    item.update(extra)
+                    if extra.get("ip"):
+                        item["ip"] = extra["ip"]
+                    enriched.append(item)
+                self._send_json({"ok": True, "host": env("ESXI_HOST"), "vms": enriched})
+            except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 502)
             return
         if path == "/api/ips":
             qs = parse_qs(parsed.query)
