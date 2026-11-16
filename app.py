@@ -49,12 +49,14 @@ class EsxiError(Exception):
 class HardOffRequired(EsxiError):
     """Guest shutdown is unavailable; UI must confirm before power.off."""
 
-    def __init__(self, name, vmid, vms):
+    def __init__(self, name, vmid, vms, tools="NotRunning"):
         self.name = name
         self.vmid = int(vmid)
         self.vms = vms
+        self.tools = tools
         super().__init__(
-            f"VMware Tools is not running on {name}. Confirm hard power off?"
+            f"VMware Tools on {name} is {tools}. Soft shutdown is not safe. "
+            "Confirm hard power off?"
         )
 
 
@@ -668,7 +670,20 @@ def set_power(vmid, action, on_progress=None, force=False):
             wait_for_power(vmid, expected)
             emit(100, "done", f"{name} hard powered off.", vmid=vmid, name=name)
             selected["power"] = expected
-            return f"Hard powered off {name} (VMware Tools was not available).", vms, None
+            return f"Hard powered off {name}.", vms, None
+
+        # Ask before hard-off when Tools is not ready. Do not rely only on
+        # power.shutdown failing — ESXi may still accept that command.
+        emit(15, "tools_check", f"Checking VMware Tools on {name}…", vmid=vmid, name=name)
+        try:
+            summary_blob = ssh(f"vim-cmd vmsvc/get.summary {int(vmid)}", timeout=45)
+            tools_status = _field(summary_blob, "toolsStatus")
+            tools_running = _field(summary_blob, "toolsRunningStatus")
+            tools = tools_label(tools_status, tools_running, True)
+        except EsxiError:
+            tools = "Unknown"
+        if tools != "Ok":
+            raise HardOffRequired(name, vmid, vms, tools=tools)
 
         emit(20, "shutdown", f"Asking {name} to shut down…", vmid=vmid, name=name)
         try:
@@ -678,8 +693,7 @@ def set_power(vmid, action, on_progress=None, force=False):
             tools_missing = "tools" in detail or "shutdownguest" in detail
             if not tools_missing:
                 raise
-            # Do not hard-off automatically — ask the operator first.
-            raise HardOffRequired(name, vmid, vms) from exc
+            raise HardOffRequired(name, vmid, vms, tools="NotRunning") from exc
         try:
             wait_for_power(vmid, expected, timeout=180)
         except EsxiError as exc:

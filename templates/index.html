@@ -688,6 +688,22 @@
     async function changePower(vm, action, options = {}) {
       const turningOn = action === "on";
       const force = Boolean(options.force);
+
+      // Ask up front when Tools is not Ok — do not wait for API soft-shutdown.
+      if (action === "off" && !force) {
+        const tools = vm.tools || "";
+        if (tools && tools !== "Ok" && tools !== "—" && tools !== "…") {
+          const accepted = window.confirm(
+            `VMware Tools on ${vm.name} is "${tools}".\n\nSoft shutdown may not work. Hard power off can cause data loss.\n\nHard power off now?`
+          );
+          if (!accepted) {
+            showBanner(`Hard power off cancelled for ${vm.name}.`, "ok");
+            return;
+          }
+          return changePower(vm, "off", { force: true });
+        }
+      }
+
       inFlight += 1;
       setProgress(vm.vmid, {
         percent: turningOn ? 5 : (force ? 40 : 15),
@@ -733,7 +749,7 @@
         if (last.type === "confirm_hard_off" || last.needs_hard_off) {
           clearProgress(vm.vmid);
           const accepted = window.confirm(
-            `${last.message || "VMware Tools is not available."}\n\nHard power off can cause data loss. Continue?`
+            `${last.message || "VMware Tools is not available."}\n\nHard power off can cause data loss.\n\nContinue with hard power off?`
           );
           if (accepted) {
             // Nested call manages its own inFlight/reload.
