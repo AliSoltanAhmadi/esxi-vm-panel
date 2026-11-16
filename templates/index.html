@@ -62,74 +62,14 @@
       color: var(--ink);
     }
     .layout {
-      display: grid;
-      grid-template-columns: 72px 320px 1fr;
       min-height: 100vh;
-    }
-    @media (max-width: 1100px) {
-      .layout { grid-template-columns: 64px 1fr; }
-      .host-panel { display: none; }
-      .layout.host-open { grid-template-columns: 64px minmax(280px, 340px) 1fr; }
-      .layout.host-open .host-panel { display: block; }
-    }
-    @media (max-width: 720px) {
-      .layout, .layout.host-open { grid-template-columns: 1fr; }
-      .nav-rail { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--line); }
-      .host-panel { border-right: 0; border-bottom: 1px solid var(--line); }
-    }
-    .nav-rail {
-      background: var(--panel);
-      border-right: 1px solid var(--line);
-      padding: 14px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      align-items: stretch;
-    }
-    .nav-tab {
-      border: 1px solid var(--line);
-      background: var(--panel-2);
-      color: var(--muted);
-      border-radius: 12px;
-      padding: 12px 8px;
-      font: inherit;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      cursor: pointer;
-    }
-    .nav-tab.active {
-      color: #fff;
-      background: linear-gradient(145deg, var(--logo-1), var(--logo-2));
-      border-color: transparent;
-    }
-    .host-panel {
-      background: var(--panel);
-      border-right: 1px solid var(--line);
-      padding: 18px 16px 24px;
-      overflow: auto;
-    }
-    .host-panel-title {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 14px;
-    }
-    .host-panel-title h2 {
-      margin: 0;
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--muted);
     }
     .brand {
       display: flex;
       gap: 12px;
       align-items: flex-start;
       margin-bottom: 16px;
-      padding: 12px;
+      padding: 14px;
       border: 1px solid var(--line);
       border-radius: 14px;
       background: var(--panel-2);
@@ -160,25 +100,27 @@
     }
     .gauge-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 12px;
+      grid-template-columns: repeat(2, minmax(160px, 220px));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    @media (max-width: 720px) {
+      .gauge-grid { grid-template-columns: 1fr 1fr; }
     }
     .gauge-card {
       background: var(--panel-2);
       border: 1px solid var(--line);
       border-radius: 14px;
-      padding: 12px 10px 10px;
+      padding: 16px 12px 12px;
       text-align: center;
     }
-    .gauge-card.wide { grid-column: 1 / -1; }
     .gauge {
-      width: 108px;
-      height: 108px;
+      width: 120px;
+      height: 120px;
       margin: 0 auto 8px;
       position: relative;
     }
-    .gauge svg { width: 108px; height: 108px; transform: rotate(-90deg); }
+    .gauge svg { width: 120px; height: 120px; transform: rotate(-90deg); }
     .gauge-track {
       fill: none;
       stroke: var(--bar-track);
@@ -260,6 +202,8 @@
       word-break: break-word;
     }
     .main {
+      max-width: 1280px;
+      margin: 0 auto;
       padding: 22px 22px 40px;
       overflow: auto;
     }
@@ -281,6 +225,30 @@
       color: var(--muted);
       font-size: 13px;
     }
+    .header-tabs {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+      min-width: 140px;
+    }
+    .header-tab {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .header-tab.active {
+      color: #fff;
+      background: linear-gradient(145deg, var(--logo-1), var(--logo-2));
+      border-color: transparent;
+    }
+    .view[hidden] { display: none !important; }
     .toolbar {
       display: flex;
       gap: 10px;
@@ -317,7 +285,16 @@
       color: var(--danger);
       border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
     }
-    .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .header-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+    .esx-view {
+      display: grid;
+      gap: 14px;
+    }
+    .esx-stores {
+      display: grid;
+      gap: 10px;
+      max-width: 720px;
+    }
     .banner {
       margin: 0 0 14px;
       padding: 12px 14px;
@@ -413,100 +390,99 @@
   </style>
 </head>
 <body>
-  <div class="layout host-open" id="layout">
-    <nav class="nav-rail" aria-label="Panel tabs">
-      <button class="nav-tab active" id="tabHost" type="button" title="ESXi host">Host</button>
-      <button class="nav-tab" id="tabVms" type="button" title="Virtual machines">VMs</button>
-    </nav>
-
-    <aside class="host-panel" id="hostPanel">
-      <div class="host-panel-title">
-        <h2>ESXi host</h2>
-      </div>
-      <div class="brand">
-        <div class="logo">vm</div>
-        <div>
-          <h1 id="hostTitle">ESXi</h1>
-          <div class="meta" id="hostMeta">Loading host…</div>
-        </div>
-      </div>
-
-      <div class="gauge-grid">
-        <div class="gauge-card">
-          <div class="gauge">
-            <svg viewBox="0 0 100 100" aria-hidden="true">
-              <circle class="gauge-track" cx="50" cy="50" r="36"></circle>
-              <circle class="gauge-value" id="cpuGauge" cx="50" cy="50" r="36"></circle>
-            </svg>
-            <div class="gauge-center" id="cpuPct">—</div>
-          </div>
-          <div class="gauge-label">CPU</div>
-          <div class="gauge-sub" id="cpuSub">—</div>
-        </div>
-        <div class="gauge-card">
-          <div class="gauge">
-            <svg viewBox="0 0 100 100" aria-hidden="true">
-              <circle class="gauge-track" cx="50" cy="50" r="36"></circle>
-              <circle class="gauge-value" id="ramGauge" cx="50" cy="50" r="36"></circle>
-            </svg>
-            <div class="gauge-center" id="ramPct">—</div>
-          </div>
-          <div class="gauge-label">RAM</div>
-          <div class="gauge-sub" id="ramSub">—</div>
-        </div>
-      </div>
-
-      <div class="metric" id="ds1Metric">
-        <div class="metric-top">
-          <span class="metric-label" id="ds1Label">Datastore</span>
-          <span class="metric-value" id="dsValue">—</span>
-        </div>
-        <div class="bar"><span id="dsBar"></span></div>
-        <div class="metric-sub" id="dsSub"></div>
-      </div>
-      <div class="metric" id="ds2Metric" hidden>
-        <div class="metric-top">
-          <span class="metric-label" id="ds2Label">OSDATA</span>
-          <span class="metric-value" id="ds2Value">—</span>
-        </div>
-        <div class="bar"><span id="ds2Bar"></span></div>
-        <div class="metric-sub" id="ds2Sub"></div>
-      </div>
-    </aside>
-
+  <div class="layout" id="layout">
     <main class="main">
       <div class="main-header">
         <div>
-          <h2>Virtual Machines</h2>
+          <h2 id="pageTitle">Virtual Machines</h2>
           <p id="intro">Loading virtual machines…</p>
+        </div>
+        <div class="header-tabs">
+          <button class="header-tab" id="tabEsxInfo" type="button">EsxInfo</button>
         </div>
         <div class="header-actions">
           <button class="ghost" id="theme" type="button">Light</button>
           <button class="ghost" id="refresh" type="button">Refresh</button>
         </div>
       </div>
-      <div class="toolbar">
-        <input id="search" type="search" placeholder="Search name, OS, IP, id…" autocomplete="off">
-      </div>
+
       <div id="banner" class="banner" hidden></div>
-      <section class="card">
-        <div id="loading" class="loading">Reading the VM list from ESXi.</div>
-        <table id="table" hidden>
-          <thead>
-            <tr>
-              <th></th>
-              <th>Name</th>
-              <th>Uptime</th>
-              <th>CPU</th>
-              <th>RAM</th>
-              <th>Disk</th>
-              <th>IP</th>
-              <th>Tools</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
+
+      <section class="view" id="vmsView">
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search name, OS, IP, id…" autocomplete="off">
+        </div>
+        <div class="card">
+          <div id="loading" class="loading">Reading the VM list from ESXi.</div>
+          <table id="table" hidden>
+            <thead>
+              <tr>
+                <th></th>
+                <th>Name</th>
+                <th>Uptime</th>
+                <th>CPU</th>
+                <th>RAM</th>
+                <th>Disk</th>
+                <th>IP</th>
+                <th>Tools</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="view esx-view" id="esxView" hidden>
+        <div class="brand">
+          <div class="logo">vm</div>
+          <div>
+            <h1 id="hostTitle">ESXi</h1>
+            <div class="meta" id="hostMeta">Loading host…</div>
+          </div>
+        </div>
+        <div class="gauge-grid">
+          <div class="gauge-card">
+            <div class="gauge">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <circle class="gauge-track" cx="50" cy="50" r="36"></circle>
+                <circle class="gauge-value" id="cpuGauge" cx="50" cy="50" r="36"></circle>
+              </svg>
+              <div class="gauge-center" id="cpuPct">—</div>
+            </div>
+            <div class="gauge-label">CPU</div>
+            <div class="gauge-sub" id="cpuSub">—</div>
+          </div>
+          <div class="gauge-card">
+            <div class="gauge">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <circle class="gauge-track" cx="50" cy="50" r="36"></circle>
+                <circle class="gauge-value" id="ramGauge" cx="50" cy="50" r="36"></circle>
+              </svg>
+              <div class="gauge-center" id="ramPct">—</div>
+            </div>
+            <div class="gauge-label">RAM</div>
+            <div class="gauge-sub" id="ramSub">—</div>
+          </div>
+        </div>
+        <div class="esx-stores">
+          <div class="metric" id="ds1Metric">
+            <div class="metric-top">
+              <span class="metric-label" id="ds1Label">Datastore</span>
+              <span class="metric-value" id="dsValue">—</span>
+            </div>
+            <div class="bar"><span id="dsBar"></span></div>
+            <div class="metric-sub" id="dsSub"></div>
+          </div>
+          <div class="metric" id="ds2Metric" hidden>
+            <div class="metric-top">
+              <span class="metric-label" id="ds2Label">OSDATA</span>
+              <span class="metric-value" id="ds2Value">—</span>
+            </div>
+            <div class="bar"><span id="ds2Bar"></span></div>
+            <div class="metric-sub" id="ds2Sub"></div>
+          </div>
+        </div>
       </section>
     </main>
   </div>
@@ -514,6 +490,7 @@
   <script>
     const hostTitle = document.querySelector("#hostTitle");
     const hostMeta = document.querySelector("#hostMeta");
+    const pageTitle = document.querySelector("#pageTitle");
     const intro = document.querySelector("#intro");
     const banner = document.querySelector("#banner");
     const loading = document.querySelector("#loading");
@@ -522,10 +499,11 @@
     const refresh = document.querySelector("#refresh");
     const themeButton = document.querySelector("#theme");
     const search = document.querySelector("#search");
-    const layout = document.querySelector("#layout");
-    const tabHost = document.querySelector("#tabHost");
-    const tabVms = document.querySelector("#tabVms");
+    const tabEsxInfo = document.querySelector("#tabEsxInfo");
+    const vmsView = document.querySelector("#vmsView");
+    const esxView = document.querySelector("#esxView");
     const GAUGE_C = 2 * Math.PI * 36;
+    let currentView = "vms";
     let inFlight = 0;
     let vms = [];
     let hostName = "";
@@ -579,12 +557,18 @@
 
     function renderHost(host) {
       if (!host) return;
+      if (host.ip) hostName = host.ip;
       hostTitle.textContent = "ESXi";
       hostMeta.innerHTML = [
         host.uptime ? `Uptime ${host.uptime}` : "",
         host.ip || "",
         host.version ? `Version ${host.version}` : "",
       ].filter(Boolean).join("<br>");
+      if (currentView === "esx") {
+        intro.textContent = host.ip
+          ? `Live host monitoring for ${host.ip}.`
+          : "Live ESXi host monitoring.";
+      }
 
       const cpu = host.cpu || {};
       setGauge(
@@ -632,12 +616,23 @@
       }
     }
 
-    function setSideTab(which) {
-      const hostActive = which === "host";
-      tabHost.classList.toggle("active", hostActive);
-      tabVms.classList.toggle("active", !hostActive);
-      layout.classList.toggle("host-open", hostActive);
-      localStorage.setItem("vm-panel-side-tab", which);
+    function setView(which) {
+      currentView = which === "esx" ? "esx" : "vms";
+      const esx = currentView === "esx";
+      tabEsxInfo.classList.toggle("active", esx);
+      vmsView.hidden = esx;
+      esxView.hidden = !esx;
+      pageTitle.textContent = esx ? "ESXi Host" : "Virtual Machines";
+      if (esx) {
+        intro.textContent = hostName
+          ? `Live host monitoring for ${hostName}.`
+          : "Live ESXi host monitoring.";
+      } else {
+        intro.textContent = hostName
+          ? `Host ${hostName}. Power on or shut down each VM from the list.`
+          : "Power on or shut down each VM from the list.";
+      }
+      localStorage.setItem("vm-panel-view", currentView);
     }
 
     function render(data) {
@@ -645,7 +640,11 @@
         vms = data.vms || [];
         hostName = data.host || hostName;
       }
-      intro.textContent = `Host ${hostName}. Power on or shut down each VM from the list.`;
+      if (currentView === "vms") {
+        intro.textContent = hostName
+          ? `Host ${hostName}. Power on or shut down each VM from the list.`
+          : "Power on or shut down each VM from the list.";
+      }
       const query = search.value.trim().toLowerCase();
       const visible = vms.filter((vm) => {
         const haystack = [
@@ -949,11 +948,12 @@
     themeButton.addEventListener("click", () => {
       applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     });
-    tabHost.addEventListener("click", () => setSideTab("host"));
-    tabVms.addEventListener("click", () => setSideTab("vms"));
+    tabEsxInfo.addEventListener("click", () => {
+      setView(currentView === "esx" ? "vms" : "esx");
+    });
     refresh.addEventListener("click", () => load());
     applyTheme(localStorage.getItem("vm-panel-theme") || "dark");
-    setSideTab(localStorage.getItem("vm-panel-side-tab") || "host");
+    setView(localStorage.getItem("vm-panel-view") || "vms");
     load();
   </script>
 </body>
