@@ -237,7 +237,7 @@
         vms = data.vms || [];
         hostName = data.host || hostName;
       }
-      intro.textContent = `Host ${hostName}. Power on waits for VMware Tools before showing 100%. Shut down asks the guest to shut down, and powers the VM off if Tools is not running.`;
+      intro.textContent = `Host ${hostName}. Power on or shut down each VM from the list.`;
       const query = search.value.trim().toLowerCase();
       const visible = vms.filter((vm) => {
         const haystack = `${vm.name} ${vm.guest} ${vm.vmid} ${vm.ip || ""}`.toLowerCase();
