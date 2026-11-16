@@ -225,20 +225,23 @@
       color: var(--muted);
       font-size: 13px;
     }
+    .header-left {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
     .header-tabs {
       display: flex;
       gap: 8px;
       align-items: center;
-      flex: 1;
-      justify-content: center;
-      min-width: 140px;
     }
     .header-tab {
       border: 1px solid var(--line);
       background: var(--panel);
       color: var(--muted);
       border-radius: 10px;
-      padding: 10px 16px;
+      padding: 8px 14px;
       font: inherit;
       font-weight: 650;
       cursor: pointer;
@@ -393,12 +396,15 @@
   <div class="layout" id="layout">
     <main class="main">
       <div class="main-header">
-        <div>
-          <h2 id="pageTitle">Virtual Machines</h2>
-          <p id="intro">Loading virtual machines…</p>
-        </div>
-        <div class="header-tabs">
-          <button class="header-tab" id="tabEsxInfo" type="button">EsxInfo</button>
+        <div class="header-left">
+          <div>
+            <h2 id="pageTitle">Virtual Machines</h2>
+            <p id="intro">Loading virtual machines…</p>
+          </div>
+          <div class="header-tabs">
+            <button class="header-tab active" id="tabVms" type="button">VMs</button>
+            <button class="header-tab" id="tabEsxInfo" type="button">EsxInfo</button>
+          </div>
         </div>
         <div class="header-actions">
           <button class="ghost" id="theme" type="button">Light</button>
@@ -499,6 +505,7 @@
     const refresh = document.querySelector("#refresh");
     const themeButton = document.querySelector("#theme");
     const search = document.querySelector("#search");
+    const tabVms = document.querySelector("#tabVms");
     const tabEsxInfo = document.querySelector("#tabEsxInfo");
     const vmsView = document.querySelector("#vmsView");
     const esxView = document.querySelector("#esxView");
@@ -619,6 +626,7 @@
     function setView(which) {
       currentView = which === "esx" ? "esx" : "vms";
       const esx = currentView === "esx";
+      tabVms.classList.toggle("active", !esx);
       tabEsxInfo.classList.toggle("active", esx);
       vmsView.hidden = esx;
       esxView.hidden = !esx;
@@ -948,9 +956,8 @@
     themeButton.addEventListener("click", () => {
       applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     });
-    tabEsxInfo.addEventListener("click", () => {
-      setView(currentView === "esx" ? "vms" : "esx");
-    });
+    tabVms.addEventListener("click", () => setView("vms"));
+    tabEsxInfo.addEventListener("click", () => setView("esx"));
     refresh.addEventListener("click", () => load());
     applyTheme(localStorage.getItem("vm-panel-theme") || "dark");
     setView(localStorage.getItem("vm-panel-view") || "vms");
