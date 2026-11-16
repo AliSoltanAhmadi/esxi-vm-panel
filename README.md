@@ -19,7 +19,45 @@ No vSphere / vCenter client required — only SSH to ESXi and a browser.
 - A Linux host that can reach the ESXi SSH port (usually TCP 22)
 - Docker Engine (recommended), **or** Python 3 + OpenSSH client
 - An ESXi account that can run `vim-cmd` and `esxcli`
+- **ESXi SSH service (`TSM-SSH`) enabled** — see below
 - VMware Tools inside the guest for a clean shutdown (optional but recommended)
+
+## Enable ESXi SSH (TSM-SSH)
+
+This panel talks to ESXi **only over SSH**. If TCP 22 is closed (`Connection refused`), start the **TSM-SSH** service on the host.
+
+### Option A — ESXi Host Client (UI)
+
+1. Open `https://YOUR_ESXI_IP` in a browser and sign in.
+2. Go to **Host** → **Manage** → **Services** (or **Navigator** → **Manage** → **Services**).
+3. Select **TSM-SSH** (SSH).
+4. Click **Start**.
+5. Optional but recommended: **Actions** → **Policy** → **Start and stop with host** so SSH survives reboot.
+
+### Option B — ESXi Direct Console (DCUI)
+
+1. On the ESXi console: **F2** → log in.
+2. **Troubleshooting Options** → **Enable ESXi Shell** (if needed) → **Enable SSH**.
+3. Exit. SSH should listen on TCP 22.
+
+### Option C — From an existing shell on the host
+
+If Shell/SSH is already available:
+
+```bash
+vim-cmd hostsvc/enable_ssh
+vim-cmd hostsvc/start_ssh
+# optional: keep SSH running after reboot
+vim-cmd hostsvc/enable_ssh
+chkconfig SSH on
+```
+
+Verify from the panel server:
+
+```bash
+nc -vz YOUR_ESXI_IP 22
+# or: timeout 3 bash -c 'echo >/dev/tcp/YOUR_ESXI_IP/22' && echo open
+```
 
 ## Quick start
 
@@ -30,10 +68,10 @@ cp .env.example .env
 # Edit .env: ESXI_HOST, ESXI_USER, ESXI_PASSWORD, ports
 ```
 
-Fetch the ESXi SSH host key into `known_hosts` (required; StrictHostKeyChecking is on):
+Confirm **TSM-SSH** is running on ESXi, then fetch the SSH host key into `known_hosts` (required; StrictHostKeyChecking is on):
 
 ```bash
-ssh-keyscan -t rsa YOUR_ESXI_IP > known_hosts
+ssh-keyscan -t rsa,ecdsa,ed25519 YOUR_ESXI_IP > known_hosts
 ```
 
 ### 2. Run with Docker Compose (online build)
