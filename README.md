@@ -82,12 +82,78 @@ docker compose up -d --build
 
 Open `http://SERVER_IP:8080` (or the port you mapped).
 
+If the build fails because Docker Hub is slow or blocked, use the mirror fallback below, then run `docker compose up -d --build` again.
+
 ### 3. Check
 
 ```bash
 docker ps --filter name=vm-panel
 curl -sS http://127.0.0.1:8080/api/vms
 ```
+
+## If Docker Hub fails — use mirrors
+
+Typical errors: `connection reset by peer`, `TLS handshake timeout`, `failed to copy`, or hanging on `FROM python:3.12-slim-bookworm`.
+
+You need **two** mirrors:
+
+| What fails | File to create / change | Purpose |
+|------------|-------------------------|---------|
+| Pulling the base image (`python:3.12-slim-bookworm`) | **`/etc/docker/daemon.json`** on the **host** (not in this repo) | Docker registry mirror for Docker Hub |
+| `apt-get` inside the build (`openssh-client`) | **`Dockerfile`** in this project | Debian apt mirror during `docker build` |
+
+`docker-compose.yml`, `.env`, and `app.py` do **not** need mirror changes.
+
+### Step 1 — Docker Hub registry mirror (host)
+
+Create or edit `/etc/docker/daemon.json` (backup first if it already exists):
+
+```json
+{
+  "registry-mirrors": [
+    "https://docker.arvancloud.ir",
+    "https://hub.hamdocker.ir"
+  ]
+}
+```
+
+Apply and verify:
+
+```bash
+sudo systemctl restart docker
+docker info | grep -A5 "Registry Mirrors"
+```
+
+Docker will try these mirrors when Hub is unreachable. No project file change is required for this step.
+
+### Step 2 — Debian apt mirror (Dockerfile)
+
+This repo’s `Dockerfile` already rewrites apt sources to `mirror.iranserver.com` before `apt-get install openssh-client`.
+
+If you need another apt mirror, edit **only** the `sed` lines at the top of `Dockerfile`:
+
+```dockerfile
+RUN sed -i 's|deb.debian.org|mirror.iranserver.com|g; s|security.debian.org|mirror.iranserver.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirror.iranserver.com|g; s|security.debian.org|mirror.iranserver.com|g' /etc/apt/sources.list 2>/dev/null || true \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends openssh-client \
+ ...
+```
+
+Replace `mirror.iranserver.com` with another reachable Debian mirror if needed.
+
+### Step 3 — Rebuild the app
+
+```bash
+docker compose down
+docker compose up -d --build
+docker ps --filter name=vm-panel
+curl -sS http://127.0.0.1:8080/api/vms
+```
+
+### Still blocked?
+
+Use the offline build (`build-offline.sh`) in the next section — it does not pull from Docker Hub.
 
 ## Configuration
 
@@ -112,9 +178,12 @@ esxi-vm-panel/
   .env              # local only — gitignored
   known_hosts       # local only — gitignored
   data/             # lock + short-lived askpass files
-  Dockerfile
+  Dockerfile        # apt mirror for build (Iran-friendly by default)
   docker-compose.yml
-  build-offline.sh  # optional: air-gapped image build
+  build-offline.sh  # optional: air-gapped image build (no Docker Hub)
+
+Host only (not in git):
+  /etc/docker/daemon.json   # registry-mirrors when Docker Hub fails
 ```
 
 ## Offline / air-gapped build

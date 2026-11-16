@@ -69,7 +69,7 @@ def ssh(command, timeout=120):
     )
     script_path = script.name
     try:
-        script.write("#!/usr/bin/python3\nprint(%s)\n" % repr(password))
+        script.write("#!/usr/bin/env python3\nprint(%s)\n" % repr(password))
         script.close()
         os.chmod(script_path, 0o700)
         process_env = os.environ.copy()
