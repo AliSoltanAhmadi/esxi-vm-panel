@@ -6,7 +6,7 @@ No vSphere / vCenter client required — only SSH to ESXi and a browser.
 
 ## Features
 
-- List all VMs with power state, guest type, and datastore
+- List all VMs with power state, guest IP (from VMware Tools), guest type, and datastore
 - Search by name, guest OS type, or VM id
 - Power on a single VM with a **live progress bar** until the guest is ready
 - Guest readiness uses ESXi `vim-cmd vmsvc/get.guest` (VMware Tools running / `toolsOk`, guest state, IP when available)
