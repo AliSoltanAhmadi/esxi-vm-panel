@@ -7,6 +7,7 @@ import tempfile
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -18,12 +19,17 @@ VM_LINE = re.compile(
     r"^(?P<vmid>\d+)\s+(?P<name>.*?)\s+\[(?P<datastore>[^\]]+)\]\s+"
     r"(?P<file>.*?)\s+(?P<guest>\S+)\s+(?P<version>vmx-\S+)\s*(?P<annotation>.*)$"
 )
-POWER_COMMAND = re.compile(r"^vim-cmd vmsvc/power\.(getstate|on|off|shutdown) [1-9][0-9]*$")
+POWER_COMMAND = re.compile(
+    r"^vim-cmd vmsvc/(?:power\.(?:getstate|on|off|shutdown)|get\.guest) [1-9][0-9]*$"
+)
 LIST_COMMAND = (
     "vim-cmd vmsvc/getallvms; "
     "echo '---RUNNING---'; "
     "esxcli vm process list"
 )
+
+TOOLS_READY = {"guestToolsRunning"}
+TOOLS_OK = {"toolsOk", "toolsOld"}
 
 
 class EsxiError(Exception):
@@ -163,6 +169,66 @@ def power_state(vmid):
     return lines[-1]
 
 
+def _field(blob, name):
+    match = re.search(rf'\b{re.escape(name)}\s*=\s*"([^"]*)"', blob)
+    if match:
+        return match.group(1)
+    match = re.search(rf"\b{re.escape(name)}\s*=\s*'([^']*)'", blob)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def guest_info(vmid):
+    """Read guest/tools readiness from ESXi (vim-cmd vmsvc/get.guest)."""
+    blob = ssh(f"vim-cmd vmsvc/get.guest {int(vmid)}", timeout=45)
+    tools_running = _field(blob, "toolsRunningStatus")
+    tools_status = _field(blob, "toolsStatus")
+    guest_state = _field(blob, "guestState")
+    ip_address = _field(blob, "ipAddress")
+    if ip_address in ("", "<unset>", "null"):
+        # Prefer the first non-empty ipv4-looking address if top-level is empty.
+        ips = re.findall(r'ipAddress\s*=\s*"(\d+\.\d+\.\d+\.\d+)"', blob)
+        ip_address = ips[0] if ips else ""
+
+    tools_running_ok = tools_running in TOOLS_READY
+    tools_status_ok = tools_status in TOOLS_OK or tools_status == ""
+    guest_running = guest_state in ("", "running")
+    ready = bool(tools_running_ok and tools_status_ok and guest_running)
+
+    if ready and ip_address:
+        percent = 100
+        stage = "guest_ready"
+        detail = f"VMware Tools running, IP {ip_address}"
+    elif ready:
+        percent = 95
+        stage = "tools_running"
+        detail = "VMware Tools running (no guest IP yet)"
+    elif tools_running_ok:
+        percent = 90
+        stage = "tools_running"
+        detail = f"Tools running ({tools_status or 'status unknown'})"
+    elif guest_state == "running":
+        percent = 70
+        stage = "waiting_tools"
+        detail = "Guest reported running; waiting for VMware Tools"
+    else:
+        percent = 55
+        stage = "waiting_tools"
+        detail = "Waiting for VMware Tools / guest OS"
+
+    return {
+        "tools_running_status": tools_running or "unknown",
+        "tools_status": tools_status or "unknown",
+        "guest_state": guest_state or "unknown",
+        "ip_address": ip_address,
+        "ready": ready,
+        "percent": percent,
+        "stage": stage,
+        "detail": detail,
+    }
+
+
 def wait_for_power(vmid, expected, timeout=90):
     deadline = time.time() + timeout
     last = ""
@@ -174,48 +240,140 @@ def wait_for_power(vmid, expected, timeout=90):
     raise EsxiError(f"VM {vmid} is still '{last}', not '{expected}'")
 
 
-def set_power(vmid, action):
+def wait_for_guest_ready(vmid, timeout=300, on_progress=None):
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        try:
+            info = guest_info(vmid)
+        except EsxiError as exc:
+            info = {
+                "ready": False,
+                "percent": 60,
+                "stage": "waiting_tools",
+                "detail": f"Waiting for guest info ({exc})",
+                "tools_running_status": "unknown",
+                "tools_status": "unknown",
+                "guest_state": "unknown",
+                "ip_address": "",
+            }
+        last = info
+        if on_progress:
+            on_progress(info)
+        if info.get("ready"):
+            return info
+        time.sleep(3)
+    if last is None:
+        raise EsxiError(f"No guest status returned for VM {vmid}")
+    last = dict(last)
+    last["ready"] = False
+    last["timed_out"] = True
+    last["percent"] = max(int(last.get("percent") or 0), 85)
+    last["stage"] = "tools_timeout"
+    last["detail"] = (
+        "VM is powered on, but VMware Tools did not become ready in time. "
+        "Guest OS may still be booting, or Tools may be missing."
+    )
+    if on_progress:
+        on_progress(last)
+    return last
+
+
+def set_power(vmid, action, on_progress=None):
     if action not in ("on", "off"):
         raise EsxiError("Choose power on or power off")
     expected = "Powered on" if action == "on" else "Powered off"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    def emit(percent, stage, detail, **extra):
+        if on_progress:
+            payload = {"percent": percent, "stage": stage, "detail": detail}
+            payload.update(extra)
+            on_progress(payload)
+
     with LOCK_PATH.open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         vms = parse_vms(ssh(LIST_COMMAND))
         selected = next((vm for vm in vms if vm["vmid"] == vmid), None)
         if selected is None:
             raise EsxiError("That VM is not on this ESXi host")
-        if selected["power"] != expected:
+        name = selected["name"]
+
+        if selected["power"] == expected:
             if action == "on":
-                ssh(f"vim-cmd vmsvc/power.on {int(vmid)}", timeout=60)
-                wait_for_power(vmid, expected)
-                selected["power"] = expected
-                return f"Powered on {selected['name']}.", vms
-            try:
-                ssh(f"vim-cmd vmsvc/power.shutdown {int(vmid)}", timeout=60)
-            except EsxiError as exc:
-                detail = str(exc).lower()
-                tools_missing = "tools" in detail or "shutdownguest" in detail
-                if not tools_missing:
-                    raise
-                ssh(f"vim-cmd vmsvc/power.off {int(vmid)}", timeout=60)
-                wait_for_power(vmid, expected)
-                selected["power"] = expected
-                return (
-                    f"VMware Tools is not running in {selected['name']}, so it was powered off.",
-                    vms,
-                )
-            try:
-                wait_for_power(vmid, expected, timeout=180)
-            except EsxiError as exc:
-                raise EsxiError(
-                    f"Guest shutdown was sent to {selected['name']}, but it is still running. {exc}"
-                ) from exc
-            selected["power"] = expected
-            return f"Shut down {selected['name']}.", vms
+                emit(40, "powered_on", f"{name} is already powered on; checking guest readiness…", vmid=vmid, name=name)
+                guest = wait_for_guest_ready(vmid, timeout=120, on_progress=on_progress)
+                vms = list_vms()
+                if guest.get("ready"):
+                    msg = f"{name} is powered on and the guest is ready"
+                    if guest.get("ip_address"):
+                        msg += f" ({guest['ip_address']})"
+                    msg += "."
+                else:
+                    msg = f"{name} is powered on, but VMware Tools is not ready yet."
+                return msg, vms, guest
+            return f"{name} is already powered off.", vms, None
+
+        if action == "on":
+            emit(5, "starting", f"Starting power on for {name}…", vmid=vmid, name=name)
+            ssh(f"vim-cmd vmsvc/power.on {int(vmid)}", timeout=60)
+            emit(25, "power_command", "Power-on command sent; waiting for VM power state…", vmid=vmid, name=name)
+            wait_for_power(vmid, expected)
+            emit(45, "powered_on", "VM is powered on; waiting for VMware Tools / guest OS…", vmid=vmid, name=name)
+            # Release lock before long guest wait so other VMs stay controllable.
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
     if action == "on":
-        return f"{selected['name']} is already powered on.", vms
-    return f"{selected['name']} is already powered off.", vms
+        guest = wait_for_guest_ready(vmid, timeout=300, on_progress=on_progress)
+        vms = list_vms()
+        if guest.get("ready"):
+            msg = f"Powered on {name}; guest is ready"
+            if guest.get("ip_address"):
+                msg += f" ({guest['ip_address']})"
+            msg += "."
+        else:
+            msg = (
+                f"Powered on {name}, but VMware Tools did not report ready in time. "
+                "The guest may still be booting."
+            )
+        return msg, vms, guest
+
+    with LOCK_PATH.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        vms = parse_vms(ssh(LIST_COMMAND))
+        selected = next((vm for vm in vms if vm["vmid"] == vmid), None)
+        if selected is None:
+            raise EsxiError("That VM is not on this ESXi host")
+        name = selected["name"]
+        if selected["power"] == "Powered off":
+            return f"{name} is already powered off.", vms, None
+        emit(20, "shutdown", f"Asking {name} to shut down…", vmid=vmid, name=name)
+        try:
+            ssh(f"vim-cmd vmsvc/power.shutdown {int(vmid)}", timeout=60)
+        except EsxiError as exc:
+            detail = str(exc).lower()
+            tools_missing = "tools" in detail or "shutdownguest" in detail
+            if not tools_missing:
+                raise
+            emit(50, "power_off", "VMware Tools missing; powering off…", vmid=vmid, name=name)
+            ssh(f"vim-cmd vmsvc/power.off {int(vmid)}", timeout=60)
+            wait_for_power(vmid, expected)
+            emit(100, "done", f"{name} powered off.", vmid=vmid, name=name)
+            selected["power"] = expected
+            return (
+                f"VMware Tools is not running in {name}, so it was powered off.",
+                vms,
+                None,
+            )
+        try:
+            wait_for_power(vmid, expected, timeout=180)
+        except EsxiError as exc:
+            raise EsxiError(
+                f"Guest shutdown was sent to {name}, but it is still running. {exc}"
+            ) from exc
+        emit(100, "done", f"{name} shut down.", vmid=vmid, name=name)
+        selected["power"] = expected
+        return f"Shut down {name}.", vms, None
 
 
 def payload_vms():
@@ -224,7 +382,8 @@ def payload_vms():
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/":
             body = (BASE_DIR / "templates" / "index.html").read_bytes()
             self._send(200, "text/html; charset=utf-8", body, cache=False)
@@ -236,6 +395,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, 502)
                 return
             self._send_json(payload)
+            return
+        if path == "/api/guest":
+            qs = parse_qs(parsed.query)
+            try:
+                vmid = int((qs.get("vmid") or [""])[0])
+                if vmid < 1:
+                    raise ValueError
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "Provide a valid vmid."}, 400)
+                return
+            try:
+                power = power_state(vmid)
+                guest = guest_info(vmid) if power == "Powered on" else {
+                    "ready": False,
+                    "percent": 0,
+                    "stage": "powered_off",
+                    "detail": "VM is powered off",
+                    "tools_running_status": "unknown",
+                    "tools_status": "unknown",
+                    "guest_state": "notRunning",
+                    "ip_address": "",
+                }
+                self._send_json({"ok": True, "host": env("ESXI_HOST"), "vmid": vmid, "power": power, "guest": guest})
+            except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 502)
             return
         self._send_json({"ok": False, "error": "Not found"}, 404)
 
@@ -255,17 +439,66 @@ class Handler(BaseHTTPRequestHandler):
                 action = str(incoming.get("action") or "")
             if action not in ("on", "off"):
                 raise ValueError
+            stream = bool(incoming.get("stream")) or action == "on"
         except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
             self._send_json({"ok": False, "error": "Choose a VM, then power on or power off."}, 400)
             return
+
+        if stream:
+            self._stream_power(vmid, action)
+            return
+
         try:
-            message, vms = set_power(vmid, action)
-            payload = {"ok": True, "host": env("ESXI_HOST"), "vms": vms}
+            message, vms, guest = set_power(vmid, action)
+            payload = {"ok": True, "host": env("ESXI_HOST"), "vms": vms, "message": message}
+            if guest is not None:
+                payload["guest"] = guest
         except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
             self._send_json({"ok": False, "error": str(exc)}, 502)
             return
-        payload["message"] = message
         self._send_json(payload)
+
+    def _stream_power(self, vmid, action):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        def emit(event):
+            line = json.dumps(event, ensure_ascii=True) + "\n"
+            self.wfile.write(line.encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            def on_progress(info):
+                event = {"ok": True, "type": "progress", "vmid": vmid, "action": action}
+                event.update(info)
+                emit(event)
+
+            message, vms, guest = set_power(vmid, action, on_progress=on_progress)
+            final = {
+                "ok": True,
+                "type": "done",
+                "vmid": vmid,
+                "action": action,
+                "message": message,
+                "host": env("ESXI_HOST"),
+                "vms": vms,
+                "percent": 100,
+                "stage": "done",
+                "detail": message,
+            }
+            if guest is not None:
+                final["guest"] = guest
+                if not guest.get("ready"):
+                    final["percent"] = int(guest.get("percent") or 85)
+                    final["stage"] = guest.get("stage") or "tools_timeout"
+            emit(final)
+        except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+            emit({"ok": False, "type": "error", "vmid": vmid, "action": action, "error": str(exc)})
+        except BrokenPipeError:
+            return
 
     def _send(self, status, content_type, body, cache=True):
         self.send_response(status)

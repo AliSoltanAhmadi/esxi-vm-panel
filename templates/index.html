@@ -16,10 +16,10 @@
       --on-bg: #e5f6ec;
       --off: #5c6b7a;
       --off-bg: #eef1f4;
-      --current: #8a4b08;
-      --current-bg: #fff4e5;
       --danger: #9d1c2b;
       --accent: #0b5cab;
+      --bar: #0b5cab;
+      --bar-bg: #d9e0e7;
     }
     * { box-sizing: border-box; }
     body {
@@ -71,6 +71,8 @@
       --off-bg: #2a3340;
       --danger: #ffb4bc;
       --accent: #9ec0ff;
+      --bar: #9ec0ff;
+      --bar-bg: #2c3846;
     }
     .toolbar {
       display: flex;
@@ -129,6 +131,39 @@
     }
     .pill.on { background: var(--on-bg); color: var(--on); }
     .empty, .loading { padding: 28px 16px; color: var(--muted); }
+    .progress-wrap {
+      margin-top: 8px;
+      min-width: 180px;
+      max-width: 280px;
+    }
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .progress-track {
+      height: 8px;
+      border-radius: 999px;
+      background: var(--bar-bg);
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: var(--bar);
+      transition: width 0.35s ease;
+    }
+    .progress-fill.pulse {
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
   </style>
 </head>
 <body>
@@ -174,6 +209,8 @@
     let vms = [];
     let hostName = "";
     const notes = [];
+    /** @type {Record<number, {percent:number, detail:string, stage:string}>} */
+    const progressByVm = {};
 
     function applyTheme(theme) {
       document.documentElement.dataset.theme = theme;
@@ -197,7 +234,7 @@
         vms = data.vms || [];
         hostName = data.host || hostName;
       }
-      intro.textContent = `Host ${hostName}. Click a VM name to power it on. Shut down asks the guest to shut down, and powers the VM off if VMware Tools is not running.`;
+      intro.textContent = `Host ${hostName}. Power on waits for VMware Tools before showing 100%. Shut down asks the guest to shut down, and powers the VM off if Tools is not running.`;
       const query = search.value.trim().toLowerCase();
       const visible = vms.filter((vm) => {
         const haystack = `${vm.name} ${vm.guest} ${vm.vmid}`.toLowerCase();
@@ -229,6 +266,10 @@
         sub.textContent = `${vm.guest} · id ${vm.vmid}`;
         nameCell.appendChild(nameButton);
         nameCell.appendChild(sub);
+        const prog = progressByVm[vm.vmid];
+        if (prog) {
+          nameCell.appendChild(progressElement(prog));
+        }
 
         const powerCell = document.createElement("td");
         powerCell.innerHTML = pill(vm.power);
@@ -236,8 +277,9 @@
         const actionCell = document.createElement("td");
         const actions = document.createElement("div");
         actions.className = "actions";
-        actions.appendChild(actionButton("Power on", "primary", vm, "on", vm.power === "Powered on"));
-        actions.appendChild(actionButton("Shut down", "danger", vm, "off", vm.power === "Powered off"));
+        const busy = Boolean(progressByVm[vm.vmid]);
+        actions.appendChild(actionButton("Power on", "primary", vm, "on", vm.power === "Powered on" || busy));
+        actions.appendChild(actionButton("Shut down", "danger", vm, "off", vm.power === "Powered off" || busy));
         actionCell.appendChild(actions);
 
         tr.appendChild(nameCell);
@@ -249,6 +291,28 @@
       table.hidden = false;
     }
 
+    function progressElement(prog) {
+      const wrap = document.createElement("div");
+      wrap.className = "progress-wrap";
+      const meta = document.createElement("div");
+      meta.className = "progress-meta";
+      const label = document.createElement("span");
+      label.textContent = prog.detail || prog.stage || "Working…";
+      const pct = document.createElement("span");
+      pct.textContent = `${Math.max(0, Math.min(100, Number(prog.percent) || 0))}%`;
+      meta.appendChild(label);
+      meta.appendChild(pct);
+      const track = document.createElement("div");
+      track.className = "progress-track";
+      const fill = document.createElement("div");
+      fill.className = "progress-fill" + ((prog.percent || 0) < 100 ? " pulse" : "");
+      fill.style.width = `${Math.max(0, Math.min(100, Number(prog.percent) || 0))}%`;
+      track.appendChild(fill);
+      wrap.appendChild(meta);
+      wrap.appendChild(track);
+      return wrap;
+    }
+
     function actionButton(label, className, vm, action, disabled) {
       const button = document.createElement("button");
       button.className = className;
@@ -257,6 +321,19 @@
       button.disabled = disabled;
       button.addEventListener("click", () => changePower(vm, action));
       return button;
+    }
+
+    function setProgress(vmid, info) {
+      progressByVm[vmid] = {
+        percent: Number(info.percent) || 0,
+        detail: info.detail || info.message || "",
+        stage: info.stage || "",
+      };
+      if (!table.hidden) render();
+    }
+
+    function clearProgress(vmid) {
+      delete progressByVm[vmid];
     }
 
     async function load() {
@@ -280,23 +357,80 @@
       }
     }
 
+    async function readNdjson(response, onEvent) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let last = null;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const event = JSON.parse(trimmed);
+          last = event;
+          onEvent(event);
+        }
+      }
+      const tail = buffer.trim();
+      if (tail) {
+        const event = JSON.parse(tail);
+        last = event;
+        onEvent(event);
+      }
+      return last;
+    }
+
     async function changePower(vm, action) {
       const turningOn = action === "on";
       inFlight += 1;
-      const progress = inFlight === 1 ? "1 power change in progress" : `${inFlight} power changes in progress`;
-      showBanner(`${turningOn ? "Powering on" : "Shutting down"} ${vm.name}. ${progress}.`, "");
+      setProgress(vm.vmid, {
+        percent: turningOn ? 5 : 15,
+        stage: "starting",
+        detail: turningOn ? `Powering on ${vm.name}…` : `Shutting down ${vm.name}…`,
+      });
+      showBanner(
+        turningOn
+          ? `Powering on ${vm.name} and waiting for VMware Tools…`
+          : `Shutting down ${vm.name}…`,
+        ""
+      );
       try {
         const response = await fetch("/api/power", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ vmid: vm.vmid, action: action }),
+          body: JSON.stringify({ vmid: vm.vmid, action: action, stream: true }),
         });
-        const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || "Power change failed");
-        notes.push({ ok: true, text: data.message });
+        if (!response.ok && !response.body) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || "Power change failed");
+        }
+        const last = await readNdjson(response, (event) => {
+          if (event.type === "progress" || event.type === "done") {
+            setProgress(vm.vmid, event);
+            if (event.detail || event.message) {
+              showBanner(event.detail || event.message, event.type === "done" ? "ok" : "");
+            }
+          }
+          if (event.type === "done" && event.vms) {
+            render(event);
+          }
+          if (event.type === "error" || event.ok === false) {
+            throw new Error(event.error || "Power change failed");
+          }
+        });
+        if (!last || last.ok === false) {
+          throw new Error((last && last.error) || "Power change failed");
+        }
+        notes.push({ ok: true, text: last.message || last.detail || "Done." });
       } catch (error) {
         notes.push({ ok: false, text: error.message });
       } finally {
+        clearProgress(vm.vmid);
         inFlight -= 1;
         if (inFlight === 0) {
           const failed = notes.some((item) => !item.ok);
@@ -304,8 +438,8 @@
           notes.length = 0;
           await load();
         } else {
-          const progress = inFlight === 1 ? "1 power change in progress" : `${inFlight} power changes in progress`;
-          showBanner(`${progress}.`, "");
+          showBanner(`${inFlight} power change(s) still in progress.`, "");
+          if (!table.hidden) render();
         }
       }
     }

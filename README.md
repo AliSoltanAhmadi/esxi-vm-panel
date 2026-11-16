@@ -8,11 +8,12 @@ No vSphere / vCenter client required — only SSH to ESXi and a browser.
 
 - List all VMs with power state, guest type, and datastore
 - Search by name, guest OS type, or VM id
-- Power on a single VM
+- Power on a single VM with a **live progress bar** until the guest is ready
+- Guest readiness uses ESXi `vim-cmd vmsvc/get.guest` (VMware Tools running / `toolsOk`, guest state, IP when available)
 - Guest shutdown via VMware Tools (`power.shutdown`); if Tools is missing, falls back to hard power off
 - Dark / light theme (remembered in the browser)
 - Concurrent power actions without freezing the UI
-- Strict allowlist of ESXi commands (`power.on`, `power.shutdown`, `power.off`, `power.getstate` + list)
+- Strict allowlist of ESXi commands (`power.on`, `power.shutdown`, `power.off`, `power.getstate`, `get.guest` + list)
 
 ## Requirements
 
@@ -211,9 +212,9 @@ After editing `app.py` or the template on an offline host, rebuild with `build-o
    - `vim-cmd vmsvc/getallvms`
    - `esxcli vm process list`  
    A VM that appears in the process list is treated as powered on.
-3. **Power on** runs `vim-cmd vmsvc/power.on <vmid>` and waits until state is powered on.
+3. **Power on** runs `vim-cmd vmsvc/power.on <vmid>`, waits until the VM is powered on, then polls `vim-cmd vmsvc/get.guest` until VMware Tools is running (or times out). Progress is streamed to the browser as NDJSON (`/api/power` with `stream: true`) and shown as a progress bar.
 4. **Shut down** prefers `vim-cmd vmsvc/power.shutdown <vmid>`. If Tools is not available, it uses `power.off` and reports that.
-5. Power changes use a file lock under `data/` so concurrent actions stay orderly. SSH passwords are passed with a short-lived askpass script under `data/` that is deleted after each command.
+5. Power changes use a file lock under `data/` for the power command; the long Tools wait runs after the lock is released so other VMs stay controllable. SSH passwords are passed with a short-lived askpass script under `data/` that is deleted after each command.
 
 The panel does **not** change VM settings, disks, or snapshots.
 
@@ -223,8 +224,11 @@ The panel does **not** change VM settings, disks, or snapshots.
 |--------|---------------|------------------------------|----------------|
 | `GET`  | `/`           | —                            | HTML UI        |
 | `GET`  | `/api/vms`    | —                            | List VMs       |
-| `POST` | `/api/power`  | `{"vmid":N,"action":"on\|off"}` | Power on/off |
+| `GET`  | `/api/guest`  | `?vmid=N`                    | Power + Tools/guest readiness |
+| `POST` | `/api/power`  | `{"vmid":N,"action":"on\|off","stream":true}` | Power on/off (NDJSON progress when streaming) |
 | `POST` | `/api/select` | `{"vmid":N}`                 | Power on (alias) |
+
+Progress stages for power on: `starting` → `power_command` → `powered_on` → `waiting_tools` → `tools_running` / `guest_ready` (100%). If Tools never becomes ready, the bar stops near 85% with a timeout message; the VM may still be booting.
 
 ## Security notes
 
