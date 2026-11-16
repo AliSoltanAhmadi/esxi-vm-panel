@@ -1,0 +1,12 @@
+services:
+  vm-panel:
+    build: .
+    image: vm-panel:local
+    container_name: vm-panel
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./.env:/opt/app/.env:ro
+      - ./data:/opt/app/data
+      - ./known_hosts:/opt/app/known_hosts:ro
+    restart: unless-stopped

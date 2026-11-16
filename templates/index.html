@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESXi VM panel</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c2430;
+      --muted: #5c6b7a;
+      --line: #d9e0e7;
+      --bg: #eef2f5;
+      --card: #ffffff;
+      --on: #0f7a45;
+      --on-bg: #e5f6ec;
+      --off: #5c6b7a;
+      --off-bg: #eef1f4;
+      --current: #8a4b08;
+      --current-bg: #fff4e5;
+      --danger: #9d1c2b;
+      --accent: #0b5cab;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 18px 48px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-end;
+      margin-bottom: 16px;
+    }
+    h1 { margin: 0 0 6px; font-size: 28px; }
+    p { margin: 0; color: var(--muted); line-height: 1.45; }
+    button, .ghost {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:disabled { cursor: wait; opacity: 0.65; }
+    .ghost { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+    .primary { background: var(--accent); color: white; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --ink: #e7edf4;
+      --muted: #a8b3c0;
+      --line: #2c3846;
+      --bg: #12181f;
+      --card: #1b242e;
+      --on: #8ee0b0;
+      --on-bg: #163528;
+      --off: #a8b3c0;
+      --off-bg: #2a3340;
+      --danger: #ffb4bc;
+      --accent: #9ec0ff;
+    }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .toolbar input {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+    }
+    .toolbar-actions { display: flex; gap: 8px; }
+    .banner {
+      margin: 0 0 14px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--card);
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    .banner.error { border-color: #f0c2c7; background: #fff5f6; color: var(--danger); }
+    .banner.ok { border-color: #b7e4c7; background: var(--on-bg); color: var(--on); }
+    html[data-theme="dark"] .banner.error { background: #3a2024; border-color: #6e3940; }
+    html[data-theme="dark"] .banner.ok { background: #163528; border-color: #2f6b4a; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 13px 14px; border-top: 1px solid var(--line); vertical-align: middle; }
+    th { border-top: 0; color: var(--muted); font-size: 13px; font-weight: 600; }
+    .name-button {
+      background: transparent;
+      color: var(--accent);
+      padding: 0;
+      font-weight: 650;
+      text-align: left;
+    }
+    .name-button:hover { text-decoration: underline; }
+    .actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .danger {
+      background: var(--card);
+      color: var(--danger);
+      border: 1px solid #f0c2c7;
+    }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 13px;
+      background: var(--off-bg);
+      color: var(--off);
+    }
+    .pill.on { background: var(--on-bg); color: var(--on); }
+    .empty, .loading { padding: 28px 16px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>ESXi VM panel</h1>
+        <p id="intro">Loading virtual machines…</p>
+      </div>
+      <button class="ghost" id="refresh" type="button">Refresh</button>
+    </header>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search virtual machines" autocomplete="off">
+      <div class="toolbar-actions">
+        <button class="ghost" id="theme" type="button">Dark</button>
+      </div>
+    </div>
+    <div id="banner" class="banner" hidden></div>
+    <section class="card">
+      <div id="loading" class="loading">Reading the VM list from ESXi.</div>
+      <table id="table" hidden>
+        <thead>
+          <tr>
+            <th>Virtual machine</th>
+            <th>Power</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    const intro = document.querySelector("#intro");
+    const banner = document.querySelector("#banner");
+    const loading = document.querySelector("#loading");
+    const table = document.querySelector("#table");
+    const rows = document.querySelector("#rows");
+    const refresh = document.querySelector("#refresh");
+    const search = document.querySelector("#search");
+    const themeButton = document.querySelector("#theme");
+    let inFlight = 0;
+    let vms = [];
+    let hostName = "";
+    const notes = [];
+
+    function applyTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      themeButton.textContent = theme === "dark" ? "Light" : "Dark";
+      localStorage.setItem("vm-panel-theme", theme);
+    }
+
+    function showBanner(text, kind) {
+      banner.hidden = !text;
+      banner.className = "banner" + (kind ? " " + kind : "");
+      banner.textContent = text || "";
+    }
+
+    function pill(power) {
+      const on = power === "Powered on";
+      return `<span class="pill${on ? " on" : ""}">${power}</span>`;
+    }
+
+    function render(data) {
+      if (data) {
+        vms = data.vms || [];
+        hostName = data.host || hostName;
+      }
+      intro.textContent = `Host ${hostName}. Click a VM name to power it on. Shut down asks the guest to shut down, and powers the VM off if VMware Tools is not running.`;
+      const query = search.value.trim().toLowerCase();
+      const visible = vms.filter((vm) => {
+        const haystack = `${vm.name} ${vm.guest} ${vm.vmid}`.toLowerCase();
+        return haystack.includes(query);
+      });
+      rows.innerHTML = "";
+      if (!visible.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 3;
+        td.className = "empty";
+        td.textContent = query ? "No virtual machines match." : "No virtual machines.";
+        tr.appendChild(td);
+        rows.appendChild(tr);
+        loading.hidden = true;
+        table.hidden = false;
+        return;
+      }
+      for (const vm of visible) {
+        const tr = document.createElement("tr");
+        const nameCell = document.createElement("td");
+        const nameButton = document.createElement("button");
+        nameButton.className = "name-button";
+        nameButton.type = "button";
+        nameButton.textContent = vm.name;
+        nameButton.addEventListener("click", () => changePower(vm, "on"));
+        const sub = document.createElement("div");
+        sub.className = "sub";
+        sub.textContent = `${vm.guest} · id ${vm.vmid}`;
+        nameCell.appendChild(nameButton);
+        nameCell.appendChild(sub);
+
+        const powerCell = document.createElement("td");
+        powerCell.innerHTML = pill(vm.power);
+
+        const actionCell = document.createElement("td");
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        actions.appendChild(actionButton("Power on", "primary", vm, "on", vm.power === "Powered on"));
+        actions.appendChild(actionButton("Shut down", "danger", vm, "off", vm.power === "Powered off"));
+        actionCell.appendChild(actions);
+
+        tr.appendChild(nameCell);
+        tr.appendChild(powerCell);
+        tr.appendChild(actionCell);
+        rows.appendChild(tr);
+      }
+      loading.hidden = true;
+      table.hidden = false;
+    }
+
+    function actionButton(label, className, vm, action, disabled) {
+      const button = document.createElement("button");
+      button.className = className;
+      button.type = "button";
+      button.textContent = label;
+      button.disabled = disabled;
+      button.addEventListener("click", () => changePower(vm, action));
+      return button;
+    }
+
+    async function load() {
+      refresh.disabled = true;
+      refresh.textContent = "Refreshing…";
+      try {
+        const response = await fetch("/api/vms?t=" + Date.now(), { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "Could not load VMs");
+        render(data);
+      } catch (error) {
+        if (!rows.children.length) {
+          loading.hidden = false;
+          table.hidden = true;
+          loading.textContent = "The VM list could not be loaded.";
+        }
+        showBanner(error.message, "error");
+      } finally {
+        refresh.disabled = false;
+        refresh.textContent = "Refresh";
+      }
+    }
+
+    async function changePower(vm, action) {
+      const turningOn = action === "on";
+      inFlight += 1;
+      const progress = inFlight === 1 ? "1 power change in progress" : `${inFlight} power changes in progress`;
+      showBanner(`${turningOn ? "Powering on" : "Shutting down"} ${vm.name}. ${progress}.`, "");
+      try {
+        const response = await fetch("/api/power", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vmid: vm.vmid, action: action }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "Power change failed");
+        notes.push({ ok: true, text: data.message });
+      } catch (error) {
+        notes.push({ ok: false, text: error.message });
+      } finally {
+        inFlight -= 1;
+        if (inFlight === 0) {
+          const failed = notes.some((item) => !item.ok);
+          showBanner(notes.map((item) => item.text).join(" "), failed ? "error" : "ok");
+          notes.length = 0;
+          await load();
+        } else {
+          const progress = inFlight === 1 ? "1 power change in progress" : `${inFlight} power changes in progress`;
+          showBanner(`${progress}.`, "");
+        }
+      }
+    }
+
+    search.addEventListener("input", () => {
+      if (!table.hidden) render();
+    });
+    themeButton.addEventListener("click", () => {
+      applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+    });
+    refresh.addEventListener("click", () => {
+      load();
+    });
+    applyTheme(localStorage.getItem("vm-panel-theme") || "light");
+    load();
+  </script>
+</body>
+</html>

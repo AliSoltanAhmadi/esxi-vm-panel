@@ -1,0 +1,13 @@
+# Secrets and local runtime data — do not publish
+.env
+known_hosts
+data/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+.venv/
+venv/
+*.log
+.DS_Store
+Thumbs.db
