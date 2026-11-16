@@ -46,6 +46,18 @@ class EsxiError(Exception):
     pass
 
 
+class HardOffRequired(EsxiError):
+    """Guest shutdown is unavailable; UI must confirm before power.off."""
+
+    def __init__(self, name, vmid, vms):
+        self.name = name
+        self.vmid = int(vmid)
+        self.vms = vms
+        super().__init__(
+            f"VMware Tools is not running on {name}. Confirm hard power off?"
+        )
+
+
 def load_env_file(path):
     if not path.exists():
         raise EsxiError(f"Missing {path}")
@@ -574,7 +586,7 @@ def wait_for_guest_ready(vmid, timeout=300, on_progress=None):
     return last
 
 
-def set_power(vmid, action, on_progress=None):
+def set_power(vmid, action, on_progress=None, force=False):
     if action not in ("on", "off"):
         raise EsxiError("Choose power on or power off")
     expected = "Powered on" if action == "on" else "Powered off"
@@ -650,6 +662,14 @@ def set_power(vmid, action, on_progress=None):
         name = selected["name"]
         if selected["power"] == "Powered off":
             return f"{name} is already powered off.", vms, None
+        if force:
+            emit(40, "power_off", f"Hard power off for {name}…", vmid=vmid, name=name)
+            ssh(f"vim-cmd vmsvc/power.off {int(vmid)}", timeout=60)
+            wait_for_power(vmid, expected)
+            emit(100, "done", f"{name} hard powered off.", vmid=vmid, name=name)
+            selected["power"] = expected
+            return f"Hard powered off {name} (VMware Tools was not available).", vms, None
+
         emit(20, "shutdown", f"Asking {name} to shut down…", vmid=vmid, name=name)
         try:
             ssh(f"vim-cmd vmsvc/power.shutdown {int(vmid)}", timeout=60)
@@ -658,16 +678,8 @@ def set_power(vmid, action, on_progress=None):
             tools_missing = "tools" in detail or "shutdownguest" in detail
             if not tools_missing:
                 raise
-            emit(50, "power_off", "VMware Tools missing; powering off…", vmid=vmid, name=name)
-            ssh(f"vim-cmd vmsvc/power.off {int(vmid)}", timeout=60)
-            wait_for_power(vmid, expected)
-            emit(100, "done", f"{name} powered off.", vmid=vmid, name=name)
-            selected["power"] = expected
-            return (
-                f"VMware Tools is not running in {name}, so it was powered off.",
-                vms,
-                None,
-            )
+            # Do not hard-off automatically — ask the operator first.
+            raise HardOffRequired(name, vmid, vms) from exc
         try:
             wait_for_power(vmid, expected, timeout=180)
         except EsxiError as exc:
@@ -803,25 +815,39 @@ class Handler(BaseHTTPRequestHandler):
             if action not in ("on", "off"):
                 raise ValueError
             stream = bool(incoming.get("stream")) or action == "on"
+            force = bool(incoming.get("force"))
         except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
             self._send_json({"ok": False, "error": "Choose a VM, then power on or power off."}, 400)
             return
 
         if stream:
-            self._stream_power(vmid, action)
+            self._stream_power(vmid, action, force=force)
             return
 
         try:
-            message, vms, guest = set_power(vmid, action)
+            message, vms, guest = set_power(vmid, action, force=force)
             payload = {"ok": True, "host": env("ESXI_HOST"), "vms": vms, "message": message}
             if guest is not None:
                 payload["guest"] = guest
+        except HardOffRequired as exc:
+            self._send_json(
+                {
+                    "ok": True,
+                    "needs_hard_off": True,
+                    "vmid": exc.vmid,
+                    "name": exc.name,
+                    "host": env("ESXI_HOST"),
+                    "vms": exc.vms,
+                    "message": str(exc),
+                }
+            )
+            return
         except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
             self._send_json({"ok": False, "error": str(exc)}, 502)
             return
         self._send_json(payload)
 
-    def _stream_power(self, vmid, action):
+    def _stream_power(self, vmid, action, force=False):
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -839,7 +865,9 @@ class Handler(BaseHTTPRequestHandler):
                 event.update(info)
                 emit(event)
 
-            message, vms, guest = set_power(vmid, action, on_progress=on_progress)
+            message, vms, guest = set_power(
+                vmid, action, on_progress=on_progress, force=force
+            )
             final = {
                 "ok": True,
                 "type": "done",
@@ -858,6 +886,23 @@ class Handler(BaseHTTPRequestHandler):
                     final["percent"] = int(guest.get("percent") or 85)
                     final["stage"] = guest.get("stage") or "tools_timeout"
             emit(final)
+        except HardOffRequired as exc:
+            emit(
+                {
+                    "ok": True,
+                    "type": "confirm_hard_off",
+                    "needs_hard_off": True,
+                    "vmid": exc.vmid,
+                    "name": exc.name,
+                    "action": action,
+                    "message": str(exc),
+                    "host": env("ESXI_HOST"),
+                    "vms": exc.vms,
+                    "percent": 40,
+                    "stage": "confirm_hard_off",
+                    "detail": str(exc),
+                }
+            )
         except (EsxiError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
             emit({"ok": False, "type": "error", "vmid": vmid, "action": action, "error": str(exc)})
         except BrokenPipeError:

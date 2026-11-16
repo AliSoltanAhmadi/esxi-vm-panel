@@ -641,52 +641,82 @@
       return last;
     }
 
-    async function changePower(vm, action) {
+    async function changePower(vm, action, options = {}) {
       const turningOn = action === "on";
+      const force = Boolean(options.force);
       inFlight += 1;
       setProgress(vm.vmid, {
-        percent: turningOn ? 5 : 15,
+        percent: turningOn ? 5 : (force ? 40 : 15),
         stage: "starting",
-        detail: turningOn ? `Powering on ${vm.name}…` : `Shutting down ${vm.name}…`,
+        detail: turningOn
+          ? `Powering on ${vm.name}…`
+          : (force ? `Hard power off ${vm.name}…` : `Shutting down ${vm.name}…`),
       });
-      showBanner(turningOn ? `Powering on ${vm.name}…` : `Shutting down ${vm.name}…`, "");
+      showBanner(
+        turningOn
+          ? `Powering on ${vm.name}…`
+          : (force ? `Hard power off ${vm.name}…` : `Shutting down ${vm.name}…`),
+        ""
+      );
+      let skipReload = false;
       try {
         const response = await fetch("/api/power", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ vmid: vm.vmid, action, stream: true }),
+          body: JSON.stringify({ vmid: vm.vmid, action, stream: true, force }),
         });
         if (!response.ok && !response.body) {
           const data = await response.json().catch(() => ({}));
           throw new Error(data.error || "Power change failed");
         }
         const last = await readNdjson(response, (event) => {
-          if (event.type === "progress" || event.type === "done") {
+          if (event.type === "progress" || event.type === "done" || event.type === "confirm_hard_off") {
             setProgress(vm.vmid, event);
             if (event.detail || event.message) {
-              showBanner(event.detail || event.message, event.type === "done" ? "ok" : "");
+              showBanner(
+                event.detail || event.message,
+                event.type === "done" ? "ok" : ""
+              );
             }
           }
           if (event.type === "done" && event.vms) render(event);
-          if (event.type === "error" || event.ok === false) {
+          if (event.type === "error" || (event.ok === false && event.type !== "confirm_hard_off")) {
             throw new Error(event.error || "Power change failed");
           }
         });
         if (!last || last.ok === false) throw new Error((last && last.error) || "Power change failed");
-        notes.push({ ok: true, text: last.message || last.detail || "Done." });
+
+        if (last.type === "confirm_hard_off" || last.needs_hard_off) {
+          clearProgress(vm.vmid);
+          const accepted = window.confirm(
+            `${last.message || "VMware Tools is not available."}\n\nHard power off can cause data loss. Continue?`
+          );
+          if (accepted) {
+            // Nested call manages its own inFlight/reload.
+            skipReload = true;
+            inFlight -= 1;
+            await changePower(vm, "off", { force: true });
+            return;
+          }
+          notes.push({ ok: true, text: `Hard power off cancelled for ${vm.name}.` });
+        } else {
+          notes.push({ ok: true, text: last.message || last.detail || "Done." });
+        }
       } catch (error) {
         notes.push({ ok: false, text: error.message });
       } finally {
-        clearProgress(vm.vmid);
-        inFlight -= 1;
-        if (inFlight === 0) {
-          const failed = notes.some((item) => !item.ok);
-          showBanner(notes.map((item) => item.text).join(" "), failed ? "error" : "ok");
-          notes.length = 0;
-          await load();
-        } else {
-          showBanner(`${inFlight} power change(s) still in progress.`, "");
-          if (!table.hidden) render();
+        if (!skipReload) {
+          clearProgress(vm.vmid);
+          inFlight -= 1;
+          if (inFlight === 0) {
+            const failed = notes.some((item) => !item.ok);
+            showBanner(notes.map((item) => item.text).join(" "), failed ? "error" : "ok");
+            notes.length = 0;
+            await load();
+          } else {
+            showBanner(`${inFlight} power change(s) still in progress.`, "");
+            if (!table.hidden) render();
+          }
         }
       }
     }
